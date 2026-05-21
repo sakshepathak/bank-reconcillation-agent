@@ -1,0 +1,493 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: #F8FAFC;
+  --surface: #FFFFFF;
+  --border: #E2E8F0;
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --primary: #6366F1;
+  --primary-dark: #4F46E5;
+  --primary-light: #EEF2FF;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+  --radius: 10px;
+}
+
+/* ── App container ─────────────────────────────────────────────────────── */
+.main, section.main, [data-testid="stAppViewContainer"] {
+  background-color: var(--bg) !important;
+  color: var(--text-primary) !important;
+  font-family: 'Outfit', sans-serif !important;
+}
+
+[data-testid="stHeader"] {
+  background: var(--bg) !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+
+.block-container {
+  max-width: 1200px !important;
+  padding-top: 1.25rem !important;
+  padding-bottom: 2rem !important;
+}
+
+/* ── Page header ───────────────────────────────────────────────────────── */
+.page-header {
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+}
+.page-header h1 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.page-header p {
+  color: var(--text-secondary);
+  margin: 0.2rem 0 0 0;
+  font-size: 0.78rem;
+}
+
+/* ── Section labels ────────────────────────────────────────────────────── */
+.section-tag {
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 1rem 0 0.5rem 0;
+  display: block;
+}
+
+/* ── Tabs ──────────────────────────────────────────────────────────────── */
+[data-testid="stTabs"] button[data-baseweb="tab"] {
+  font-size: 0.82rem !important;
+  padding: 0.5rem 0.85rem !important;
+}
+
+/* ── Metric cards ──────────────────────────────────────────────────────── */
+[data-testid="stMetricContainer"] {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  padding: 0.6rem 0.9rem !important;
+}
+[data-testid="stMetricValue"] {
+  font-size: 1.35rem !important;
+  font-weight: 600 !important;
+}
+[data-testid="stMetricLabel"] {
+  font-size: 0.7rem !important;
+}
+[data-testid="stMetricDelta"] {
+  font-size: 0.68rem !important;
+}
+
+/* ── Status badges ─────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 9999px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  vertical-align: middle;
+}
+.badge-exact     { background:#DCFCE7; color:#15803D; }
+.badge-fuzzy     { background:#FEF3C7; color:#B45309; }
+.badge-split     { background:#EDE9FE; color:#6D28D9; }
+.badge-unmatched { background:#FEE2E2; color:#B91C1C; }
+
+/* ── Side-by-side comparison card (tightened) ──────────────────────────── */
+.compare-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+  margin-top: 0.3rem;
+}
+.compare-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.4rem 0.6rem;
+}
+.compare-card.bank   { border-top: 2px solid var(--primary); }
+.compare-card.ledger { border-top: 2px solid var(--success); }
+.compare-card.empty  { border-top: 2px solid var(--danger); background: #FEF2F2; }
+
+.compare-card .label {
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.25rem;
+}
+.compare-card .field {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 0.35rem;
+  padding: 0.08rem 0;
+  font-size: 0.72rem;
+  border-bottom: 1px dashed #F1F5F9;
+}
+.compare-card .field:last-child { border-bottom: none; }
+.compare-card .field .key {
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 0.65rem;
+}
+.compare-card .field .val {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-primary);
+  word-break: break-word;
+  font-size: 0.72rem;
+}
+.compare-card .empty-msg {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  padding: 0.2rem 0;
+}
+
+/* ── Confidence meter ──────────────────────────────────────────────────── */
+.meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  vertical-align: middle;
+}
+.meter-bar {
+  width: 80px;
+  height: 5px;
+  background: #E2E8F0;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+.meter-fill {
+  height: 100%;
+  border-radius: 9999px;
+}
+
+/* ── Buttons (compact) ─────────────────────────────────────────────────── */
+.stButton > button {
+  border-radius: 6px !important;
+  font-family: 'Outfit', sans-serif !important;
+  font-weight: 500 !important;
+  font-size: 0.72rem !important;
+  padding: 0.15rem 0.55rem !important;
+  min-height: 24px !important;
+  height: auto !important;
+  line-height: 1.2 !important;
+}
+.stButton > button:hover {
+  transform: translateY(-1px);
+  transition: transform 0.12s ease;
+}
+.stButton > button[kind="primary"] {
+  font-weight: 600 !important;
+}
+
+/* Form submit buttons match */
+[data-testid="stFormSubmitButton"] > button {
+  font-size: 0.72rem !important;
+  padding: 0.15rem 0.55rem !important;
+  min-height: 24px !important;
+}
+
+/* ── File uploader ─────────────────────────────────────────────────────── */
+[data-testid="stFileUploader"] {
+  border: 1px dashed var(--border) !important;
+  border-radius: var(--radius) !important;
+  background: var(--surface) !important;
+  padding: 0.5rem !important;
+}
+[data-testid="stFileUploader"] section {
+  padding: 0.5rem !important;
+}
+
+/* ── Bordered containers (the pair cards) — tighter ────────────────────── */
+[data-testid="stVerticalBlockBorderWrapper"] {
+  padding: 0.45rem 0.65rem !important;
+  margin-bottom: 0.35rem !important;
+  border-radius: 8px !important;
+}
+/* Crush the vertical gap between sub-elements inside a pair card */
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlock"] {
+  gap: 0.25rem !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stMarkdownContainer"] p {
+  margin: 0 !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stCaptionContainer"] {
+  margin-top: 0 !important;
+}
+
+/* Bank ref chip inside the header */
+.bank-ref {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  background: #F1F5F9;
+  padding: 0.05rem 0.4rem;
+  border-radius: 5px;
+  margin-left: 0.3rem;
+}
+
+/* Inline status badge (replaces emoji buttons after a decision) */
+.inline-status {
+  text-align: right;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  padding-top: 0.15rem;
+}
+.inline-status.status-ok  { color: var(--success); }
+.inline-status.status-bad { color: var(--danger); }
+.inline-status.status-new { color: var(--primary); }
+
+/* Mini hint inside the Add Bill form */
+.mini-form-hint {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.35rem;
+}
+
+/* Tighter expander inside pair cards */
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stExpander"] details summary p {
+  font-size: 0.7rem !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stExpander"] {
+  margin-top: 0.25rem !important;
+}
+
+/* Tighter forms inside pair cards */
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stForm"] {
+  padding: 0.5rem 0.6rem !important;
+}
+
+/* ── Sales / Purchase upload-category labels ───────────────────────────── */
+.upload-cat {
+  padding: 0.5rem 0.65rem 0.4rem;
+  border-radius: 8px;
+  margin-bottom: 0.3rem;
+  border: 1px solid var(--border);
+}
+.upload-cat-sales {
+  background: linear-gradient(135deg, #ECFDF5 0%, #F0FDF4 100%);
+  border-color: #BBF7D0;
+}
+.upload-cat-purchase {
+  background: linear-gradient(135deg, #EFF6FF 0%, #EEF2FF 100%);
+  border-color: #C7D2FE;
+}
+.upload-cat-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+.upload-cat-sub {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-top: 0.15rem;
+}
+
+/* ── Many-to-One stacked bank lines ────────────────────────────────────── */
+.m2o-line {
+  display: grid;
+  grid-template-columns: 75px 80px 1fr;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  font-size: 0.74rem;
+  border-bottom: 1px dashed #F1F5F9;
+}
+.m2o-line:last-child { border-bottom: none; }
+.m2o-amt {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.m2o-date {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-secondary);
+}
+.m2o-desc {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Duplicate panel row styling ───────────────────────────────────────── */
+.dup-vendor { font-size: 0.78rem; line-height: 1.2; }
+.dup-vendor strong { color: var(--text-primary); }
+.dup-vendor .dup-file {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  color: var(--text-secondary);
+}
+.dup-amt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.dup-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+.dup-reason {
+  font-size: 0.7rem;
+  color: #B45309;
+  background: #FEF3C7;
+  padding: 0.15rem 0.45rem;
+  border-radius: 5px;
+  display: inline-block;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Failed-extraction row */
+.failed-reason {
+  font-size: 0.75rem;
+  color: #991B1B;
+  line-height: 1.35;
+  padding: 0.15rem 0;
+}
+
+/* ── Captions ──────────────────────────────────────────────────────────── */
+[data-testid="stCaptionContainer"] {
+  font-size: 0.7rem !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SIDEBAR — Solid violet, brand-accent
+   ══════════════════════════════════════════════════════════════════════ */
+[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #4F46E5 0%, #6366F1 100%) !important;
+  border-right: none !important;
+}
+[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+  padding: 1.1rem 0.9rem !important;
+}
+[data-testid="stSidebar"] * {
+  color: white !important;
+}
+[data-testid="stSidebar"] .stMarkdown,
+[data-testid="stSidebar"] .stMarkdown p {
+  color: white !important;
+}
+
+/* User card */
+.sb-user {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid rgba(255,255,255,0.18);
+}
+.sb-avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.22);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+.sb-user-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.sb-user-role {
+  font-size: 0.68rem;
+  opacity: 0.7;
+  margin-top: 0.1rem;
+}
+
+/* Pending review counter card */
+.sb-pending {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  margin: 0.85rem 0;
+}
+.sb-pending-num {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.sb-pending-lbl {
+  font-size: 0.66rem;
+  opacity: 0.8;
+  margin-top: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Section label */
+.sb-section {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.65;
+  margin: 1rem 0 0.5rem 0;
+}
+
+/* Recent runs */
+.sb-empty {
+  font-size: 0.72rem;
+  opacity: 0.65;
+  font-style: italic;
+}
+.sb-run {
+  padding: 0.45rem 0.65rem;
+  border-radius: 7px;
+  background: rgba(255,255,255,0.06);
+  margin-bottom: 0.35rem;
+}
+.sb-run-id {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 600;
+  word-break: break-all;
+}
+.sb-run-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.25rem;
+  font-size: 0.66rem;
+  opacity: 0.8;
+}
+.sb-run-pct {
+  background: rgba(255,255,255,0.18);
+  padding: 0.08rem 0.4rem;
+  border-radius: 5px;
+  font-weight: 600;
+  opacity: 1;
+}
+
+/* Footer */
+.sb-footer {
+  position: absolute;
+  bottom: 1rem;
+  left: 0.9rem;
+  right: 0.9rem;
+  font-size: 0.62rem;
+  opacity: 0.5;
+  text-align: center;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  padding-top: 0.5rem;
+}

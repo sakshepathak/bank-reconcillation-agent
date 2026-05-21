@@ -39,3 +39,11 @@ ENV/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Databases
+*.db
+*.sqlite
+data/
+
+# Reference folder
+adv-rag-model/

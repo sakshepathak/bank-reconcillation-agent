@@ -1,3 +1,1 @@
-"""
-Agent module for reasoning and logic.
-"""
+"""agent package."""

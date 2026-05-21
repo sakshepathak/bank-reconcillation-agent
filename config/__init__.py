@@ -1,3 +1,1 @@
-"""
-Configuration module.
-"""
+"""config package."""

@@ -27,16 +27,19 @@ When a human corrects a match or identifies a new pattern (e.g., "AMZN MKTPL is 
 
 ## Action Plan for Implementation
 
-### Phase 1: Foundation (Current Milestone)
-*   Focus on setting up the SDK and the base MCP matching tool using local memory/mock DB.
+### Phase 1: Knowledge Base & Advanced RAG (Current Focus)
+*   Implement Advanced RAG system (Hybrid Search with Qdrant, Contextual Retrieval) as the foundational Knowledge Base.
+*   Setup the collection for reconciliation rules, SOPs, and historical data.
+*   Integrate this RAG system as an MCP tool for the agent.
+
+### Phase 2: Foundation & Base Matching
+*   Set up the SDK and the base MCP matching tool.
 *   Define the structure for GBrain markdown files (e.g., `skills/` and `knowledge/` directories).
 
-### Phase 2: GBrain Setup (Post M1)
+### Phase 3: GBrains Setup (Post M1)
 *   Create the interface for reading/writing to the GBrain markdown repository.
 *   Implement the "Self-Learning" logic that triggers a GBrain update on human correction.
 
-### Phase 3: Advanced Retrieval
-*   Integrate GBrain query capabilities into the Agent's reasoning loop before execution.
 
 ---
 *Prepared by Senior Principal AI Engineer*

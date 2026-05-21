@@ -1,7 +1,35 @@
-claude-agent-sdk
-mcp
-pandas
-rapidfuzz
-sqlmodel
-python-dotenv
-pytest
+# ── Core ─────────────────────────────────────────────────────────────────────
+anthropic>=0.30.0            # Anthropic SDK for Claude agent
+pydantic>=2.0                # Data validation
+pydantic-settings>=2.0       # Settings from .env
+
+# ── MCP ──────────────────────────────────────────────────────────────────────
+mcp[cli]>=1.0                # Model Context Protocol (FastMCP server)
+
+# ── Vector DB & Embeddings ────────────────────────────────────────────────────
+qdrant-client>=1.9           # Qdrant vector store client
+fastembed>=0.6               # Local embedding models (dense + sparse BM25)
+
+# ── Data Processing ───────────────────────────────────────────────────────────
+pandas>=2.0                  # CSV parsing and DataFrame operations
+rapidfuzz>=3.0               # Fuzzy string matching (token_set_ratio)
+pulp>=2.9.0                  # Mixed-Integer Programming for subset sum solver
+pymupdf>=1.24                # Pure-Python PDF rendering for vision extraction
+
+# ── Database ─────────────────────────────────────────────────────────────────
+sqlmodel>=0.0.18             # ORM + schema (SQLAlchemy under the hood)
+
+# ── LLM providers ────────────────────────────────────────────────────────────
+google-genai>=1.0            # Gemini — primary vision + structured-output extraction
+groq>=0.9                    # Groq API — fast text inference, ingest helper, legacy vision
+# openrouter routed via OpenAI-compatible client; no extra dep needed
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+python-dotenv>=1.0           # Load .env file
+rich>=13.0                   # Pretty terminal output
+streamlit>=1.30.0            # Validation UI
+plotly>=5.0.0                # Charts for dashboard
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0
+pytest-asyncio>=0.23

@@ -1,0 +1,8 @@
+txn_id,date,description,amount
+L1,2024-01-14,Amazon Marketplace,125.50
+L2,2024-01-17,Google Workspace,25.00
+L3,2024-01-20,Alice Salary,6000.00
+L4,2024-01-20,Bob Salary,5000.00
+L5,2024-01-20,Charlie Salary,4000.00
+L6,2024-01-22,Square Coffee,4.50
+L7,2024-01-24,Stripe Payout,500.00

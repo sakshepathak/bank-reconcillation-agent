@@ -1,0 +1,52 @@
+# VCS & editors
+**/.git
+**/.gitignore
+**/.vscode
+**/.vs
+**/.idea
+
+# Python build artefacts
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Virtualenvs
+.venv
+venv
+env
+
+# Local data we don't want baked in
+**/*.db
+**/*.sqlite
+data/fastembed_cache
+data/qdrant
+data/bank_recon.db
+
+# Secrets — passed via env_file at runtime
+.env
+.env.local
+
+# Dev scratch
+scratch/
+
+# Docker meta
+**/Dockerfile*
+**/docker-compose*
+**/compose*
+**/.dockerignore
+
+# Big assets we never need in the image
+Bank reconciliation UI redesign plan.html
+Bank reconciliation UI redesign plan_files/
+Bank_Reconciliation_Agent_KB_Master.xlsx
+
+# OS junk
+**/.DS_Store
+**/Thumbs.db
+
+# Misc
+LICENSE
+README.md

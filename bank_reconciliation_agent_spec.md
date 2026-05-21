@@ -56,15 +56,16 @@ Expert Consultation: You are the expert. If you believe a specific library, arch
 
 Reliability: Implement comprehensive error handling and structured logging. If a tool fails, the agent should catch the error, explain it, and attempt a retry or ask for help.
 
-First Milestone: Begin with M0 & M1. Set up the SDK and a single MCP-based matching tool. Show me the folder structure before proceeding to M2.
+First Milestone: Begin with setting up the Advanced RAG Knowledge Base (Qdrant, Hybrid Search) as the foundation. Then set up the SDK and a single MCP-based matching tool. Show me the folder structure before proceeding to M2.
 
 Architecture Overview
 💡 Should you start from scratch or build on your RAG bot?
-Verdict: Build the "Agent Engine" from scratch, but import your RAG bot as a tool.
+Verdict: Build the "Agent Engine" from scratch, but implement an Advanced RAG system (similar to the Peakvisory project) as the core Knowledge Base before adding complex reasoning (GBrains).
 
-Why? A standard RAG bot is designed for retrieval. A Financial Agent is designed for action and logic.
+Why? A Knowledge Base is the most important thing. The agent needs data to reason over.
 
-The Hybrid Approach: Keep your RAG bot's logic for "looking up company policy" or "searching past tax documents," but build the Bank Reconciliation Agent as a new, specialized worker using the Claude Agent SDK.
+The Hybrid Approach: Use the Advanced RAG logic (Hybrid Search + Contextual Retrieval) for "looking up company policy", "rules", and "past reconciliations", while building the Bank Reconciliation Agent as a new, specialized worker using the Claude Agent SDK.
+
 
 The Result: Your Meta-Agent (the router) will eventually be able to say: "I'll use the Recon Agent to match these files, and if I find a weird tax fee, I'll call the RAG Bot to look up our corporate tax policy on how to handle it."
 

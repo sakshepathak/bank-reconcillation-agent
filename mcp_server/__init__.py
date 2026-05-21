@@ -1,3 +1,1 @@
-"""
-MCP Server module for exposing tools.
-"""
+"""mcp_server package."""
