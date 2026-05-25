@@ -182,3 +182,202 @@ class Contact(SQLModel, table=True):
     notes: Optional[str] = None
     created_at: str = Field(default="")
     updated_at: str = Field(default="")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Xero-style accounting entities
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class DocumentStatus(str, Enum):
+    """Lifecycle states for invoices and bills (matches Xero's tab labels)."""
+    DRAFT = "draft"
+    AWAITING_APPROVAL = "awaiting_approval"
+    AWAITING_PAYMENT = "awaiting_payment"
+    PAID = "paid"
+    VOIDED = "voided"
+
+
+class StatementLineStatus(str, Enum):
+    """Lifecycle of a single line on a bank statement."""
+    PENDING = "pending"          # imported, not yet reconciled
+    MATCHED = "matched"          # linked to an invoice or bill
+    MANUAL = "manual"            # linked to a JournalEntry (Create flow)
+    TRANSFER = "transfer"        # cross-account transfer
+    DISCUSSED = "discussed"      # has a comment, awaiting resolution
+
+
+class BankAccount(SQLModel, table=True):
+    """
+    One row per bank account the company holds. Two balances tracked:
+
+      statement_balance  →  what the bank says (from the latest import)
+      ooo_balance        →  what OOO (this app) thinks the balance is,
+                            computed from invoices + bills + journal
+                            entries that have been reconciled so far.
+
+    The core invariant of the app:
+
+        when every StatementLine is reconciled,
+        statement_balance == ooo_balance
+
+    `balance_difference` (computed property, not stored) is what the
+    Reconcile screen is trying to drive to zero.
+    """
+
+    __tablename__ = "bank_account"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str                                    # "Business Bank Account"
+    account_number: Optional[str] = None         # "090-8007-006543"
+    bank_name: Optional[str] = None              # "Barclays"
+    currency: str = Field(default="GBP")         # ISO 4217
+    statement_balance: float = Field(default=0.0)   # what the bank shows
+    ooo_balance: float = Field(default=0.0)         # what OOO shows (live ledger)
+    last_imported_at: Optional[str] = None
+    is_active: bool = Field(default=True)
+    created_at: str = Field(default="")
+
+
+class Invoice(SQLModel, table=True):
+    """
+    Sales invoice — money owed TO the company by a customer.
+    Flips to PAID when its outstanding amount hits zero from matched
+    statement lines.
+    """
+
+    __tablename__ = "invoice"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    number: str = Field(index=True)              # "INV-0028"
+    contact_id: Optional[int] = Field(default=None, foreign_key="contact.id", index=True)
+    contact_name: str                            # snapshot at issue time
+    reference: Optional[str] = None              # customer PO / external ref
+    issue_date: str                              # ISO date
+    due_date: Optional[str] = None
+    subtotal: float = Field(default=0.0)
+    tax_total: float = Field(default=0.0)
+    total: float = Field(default=0.0)
+    paid_amount: float = Field(default=0.0)      # sum of matched payments
+    currency: str = Field(default="GBP")
+    status: DocumentStatus = Field(default=DocumentStatus.DRAFT, index=True)
+    notes: Optional[str] = None
+    sent: bool = Field(default=False)            # emailed to customer?
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
+
+
+class InvoiceLine(SQLModel, table=True):
+    """Single line item on a sales invoice."""
+
+    __tablename__ = "invoice_line"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    invoice_id: int = Field(foreign_key="invoice.id", index=True)
+    description: str
+    quantity: float = Field(default=1.0)
+    unit_price: float = Field(default=0.0)
+    tax_rate: float = Field(default=0.0)         # 0.20 for 20% VAT
+    line_total: float = Field(default=0.0)       # qty * unit_price (pre-tax)
+    service_id: Optional[int] = Field(default=None, foreign_key="service_offered.id")
+
+
+class Bill(SQLModel, table=True):
+    """
+    Purchase bill — money owed BY the company to a supplier.
+    Mirror of Invoice but for accounts payable.
+    """
+
+    __tablename__ = "bill"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    number: Optional[str] = None                 # supplier's bill number
+    contact_id: Optional[int] = Field(default=None, foreign_key="contact.id", index=True)
+    contact_name: str                            # supplier name snapshot
+    reference: Optional[str] = None              # internal ref
+    issue_date: str
+    due_date: Optional[str] = None
+    subtotal: float = Field(default=0.0)
+    tax_total: float = Field(default=0.0)
+    total: float = Field(default=0.0)
+    paid_amount: float = Field(default=0.0)
+    currency: str = Field(default="GBP")
+    status: DocumentStatus = Field(default=DocumentStatus.DRAFT, index=True)
+    notes: Optional[str] = None
+    source_file_path: Optional[str] = None       # set if extracted from a PDF
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
+
+
+class BillLine(SQLModel, table=True):
+    """Single line item on a purchase bill."""
+
+    __tablename__ = "bill_line"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    bill_id: int = Field(foreign_key="bill.id", index=True)
+    description: str
+    quantity: float = Field(default=1.0)
+    unit_price: float = Field(default=0.0)
+    tax_rate: float = Field(default=0.0)
+    line_total: float = Field(default=0.0)
+    account_code: Optional[str] = None           # GL account (e.g. "5000")
+
+
+class JournalEntry(SQLModel, table=True):
+    """
+    Manual ledger entry created inline from the Reconcile screen's
+    "Create" tab — when a bank line has no matching invoice or bill.
+    The signed `amount` follows the convention: positive = money in,
+    negative = money out (matches the bank line's direction).
+    """
+
+    __tablename__ = "journal_entry"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    date: str                                    # inherited from bank line
+    contact_id: Optional[int] = Field(default=None, foreign_key="contact.id")
+    contact_name: Optional[str] = None           # the "Who" field
+    account_code: Optional[str] = None           # the "What" field
+    description: str                             # the "Why" field
+    amount: float                                # signed: + received, - spent
+    tax_rate: float = Field(default=0.0)
+    currency: str = Field(default="GBP")
+    created_at: str = Field(default="")
+
+
+class StatementLine(SQLModel, table=True):
+    """
+    One row per line on an imported bank statement. The left side of the
+    reconcile split-pane. `status` tracks the reconciliation lifecycle;
+    exactly one of `matched_invoice_id`, `matched_bill_id`,
+    `matched_journal_id`, or `transfer_to_account_id` is populated once
+    reconciled.
+
+    `spent` and `received` are split (Xero convention) so the UI can
+    show two columns without sign juggling.
+    """
+
+    __tablename__ = "statement_line"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    bank_account_id: int = Field(foreign_key="bank_account.id", index=True)
+    date: str                                    # ISO date
+    description: str                             # raw bank text
+    reference: Optional[str] = None              # cheque / external ref
+    spent: float = Field(default=0.0)            # > 0 if money out
+    received: float = Field(default=0.0)         # > 0 if money in
+    balance_after: Optional[float] = None        # running balance per stmt
+    status: StatementLineStatus = Field(default=StatementLineStatus.PENDING, index=True)
+
+    # Reconciliation links (exactly one populated once status != PENDING)
+    matched_invoice_id: Optional[int] = Field(default=None, foreign_key="invoice.id")
+    matched_bill_id: Optional[int] = Field(default=None, foreign_key="bill.id")
+    matched_journal_id: Optional[int] = Field(default=None, foreign_key="journal_entry.id")
+    transfer_to_account_id: Optional[int] = Field(default=None, foreign_key="bank_account.id")
+
+    # Meta
+    discussion: Optional[str] = None             # note from "Discuss" tab
+    suggested_score: Optional[float] = None      # auto-match confidence 0-1
+    imported_at: str = Field(default="")
+    reconciled_at: Optional[str] = None

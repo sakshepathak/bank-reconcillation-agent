@@ -73,6 +73,14 @@ export interface VendorAlias {
   created_at: string
 }
 
+export interface UserProfile {
+  id: number | null
+  name: string
+  role: string
+  email: string | null
+  updated_at: string
+}
+
 export interface DashboardStats {
   total_runs: number
   total_transactions: number

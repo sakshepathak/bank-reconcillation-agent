@@ -21,7 +21,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from memory.db import init_db
-from api.routers import health, dashboard, runs, matches, contacts, company, aliases, audit
+from api.routers import (
+    health, dashboard, runs, matches, contacts, company, aliases, audit, profile,
+    bank_accounts, invoices, bills, journal_entries, statement_lines,
+)
 
 app = FastAPI(
     title="Bank Reconciliation API",
@@ -62,3 +65,11 @@ app.include_router(contacts.router,  prefix=PREFIX)
 app.include_router(company.router,   prefix=PREFIX)
 app.include_router(aliases.router,   prefix=PREFIX)
 app.include_router(audit.router,     prefix=PREFIX)
+app.include_router(profile.router,   prefix=PREFIX)
+
+# Xero-style accounting routes
+app.include_router(bank_accounts.router,   prefix=PREFIX)
+app.include_router(invoices.router,        prefix=PREFIX)
+app.include_router(bills.router,           prefix=PREFIX)
+app.include_router(journal_entries.router, prefix=PREFIX)
+app.include_router(statement_lines.router, prefix=PREFIX)

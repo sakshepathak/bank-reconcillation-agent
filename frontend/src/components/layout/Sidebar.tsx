@@ -1,13 +1,16 @@
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard, RefreshCw, CheckSquare,
-  Users, FileText, BookOpen, Settings, Building2,
+  LayoutDashboard, RefreshCw, CheckSquare, Receipt, FileSpreadsheet,
+  Landmark, Users, FileText, BookOpen, Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const NAV = [
-  { to: '/dashboard',       icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/reconciliation',  icon: RefreshCw,        label: 'Reconciliation' },
+  { to: '/dashboard',       icon: LayoutDashboard,  label: 'Dashboard' },
+  { to: '/sales',           icon: Receipt,          label: 'Sales' },
+  { to: '/purchases',       icon: FileSpreadsheet,  label: 'Purchases' },
+  { to: '/bank-accounts',   icon: Landmark,         label: 'Bank Accounts' },
+  { to: '/reconciliation',  icon: RefreshCw,        label: 'Reconcile' },
   { to: '/review',          icon: CheckSquare,      label: 'Review Queue' },
   { to: '/contacts',        icon: Users,            label: 'Contacts' },
   { to: '/audit',           icon: FileText,         label: 'Audit Trail' },
@@ -21,10 +24,13 @@ export default function Sidebar() {
       {/* Brand */}
       <div className="px-5 py-4 border-b border-white/15">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center">
-            <Building2 className="w-4 h-4 text-white" />
+          <div className="w-9 h-9 rounded-lg bg-white/15 flex items-center justify-center">
+            <span className="text-white font-black text-base tracking-tight">OOO</span>
           </div>
-          <span className="text-white font-semibold text-sm tracking-tight">Reconcile</span>
+          <div className="leading-tight">
+            <p className="text-white font-semibold text-sm">OOO</p>
+            <p className="text-white/60 text-[10px]">Bank Reconciliation</p>
+          </div>
         </div>
       </div>
 
@@ -51,7 +57,7 @@ export default function Sidebar() {
 
       {/* Footer */}
       <div className="px-4 py-3 border-t border-white/10">
-        <p className="text-white/40 text-xs text-center">Reconciliation Engine v1</p>
+        <p className="text-white/40 text-xs text-center">OOO · v1</p>
       </div>
     </aside>
   )
