@@ -1,6 +1,7 @@
 """Bill CRUD with line items + status transitions (mirror of invoices)."""
+import asyncio
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from memory.models import Bill, BillLine, DocumentStatus
@@ -8,6 +9,10 @@ from api.schemas.models import (
     BillCreate, BillResponse, BillUpdate, BillLineResponse,
 )
 from api.deps import get_db
+from engine.file_store import save_upload
+from mcp_server.tools.invoice_extractor import extract_invoice
+
+_ALLOWED_MIMES = {"application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp"}
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 
@@ -131,3 +136,68 @@ def delete_bill(bill_id: int, db: Session = Depends(get_db)):
         db.delete(l)
     db.delete(b)
     db.commit()
+
+
+@router.post("/upload", response_model=BillResponse, status_code=201)
+async def upload_bill(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """
+    Accept a PDF/image of a supplier bill. The LLM extractor pulls out
+    supplier, date, amount and currency, then a draft Bill is created
+    with a single line item containing the extracted total. The PDF is
+    stored on disk and referenced via `source_file_path` so the user can
+    view it back later.
+    """
+    contents = await file.read()
+    mime = (file.content_type or "").lower()
+    if mime not in _ALLOWED_MIMES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type: {mime or 'unknown'}. Use PDF, PNG, JPG or WEBP.",
+        )
+
+    filename = file.filename or "upload.pdf"
+    file_hash, storage_path = save_upload(contents, filename, mime)
+
+    result = await asyncio.to_thread(extract_invoice, contents, filename, mime, "purchase")
+    if result.error:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not extract data from {filename}: {result.error}",
+        )
+
+    now = _now()
+    b = Bill(
+        number=result.invoice_id,
+        contact_name=(result.vendor or "Unknown supplier").strip(),
+        issue_date=result.date or now[:10],
+        currency=(result.currency or "GBP").upper(),
+        status=DocumentStatus.DRAFT,
+        notes=(
+            f"Imported from {filename} "
+            f"(confidence {result.confidence:.0%})"
+        ),
+        source_file_path=storage_path,
+        subtotal=result.amount,
+        tax_total=0.0,
+        total=result.amount,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(b)
+    db.commit()
+    db.refresh(b)
+
+    line = BillLine(
+        bill_id=b.id,
+        description=f"Extracted from {filename} — please verify",
+        quantity=1.0,
+        unit_price=result.amount,
+        tax_rate=0.0,
+        line_total=result.amount,
+        account_code=None,
+    )
+    db.add(line)
+    db.commit()
+    db.refresh(line)
+
+    return _to_resp(b, [line])

@@ -1,6 +1,7 @@
 """Invoice CRUD with line items + status transitions."""
+import asyncio
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from memory.models import Invoice, InvoiceLine, DocumentStatus
@@ -8,6 +9,10 @@ from api.schemas.models import (
     InvoiceCreate, InvoiceResponse, InvoiceUpdate, InvoiceLineResponse,
 )
 from api.deps import get_db
+from engine.file_store import save_upload
+from mcp_server.tools.invoice_extractor import extract_invoice
+
+_ALLOWED_MIMES = {"application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp"}
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -131,3 +136,66 @@ def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
         db.delete(l)
     db.delete(inv)
     db.commit()
+
+
+@router.post("/upload", response_model=InvoiceResponse, status_code=201)
+async def upload_invoice(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """
+    Accept a PDF/image of a sales invoice. The LLM extractor pulls out
+    customer, date, amount and currency, then a draft Invoice is created
+    with a single line item containing the extracted total. The user
+    reviews and refines the lines before approving.
+    """
+    contents = await file.read()
+    mime = (file.content_type or "").lower()
+    if mime not in _ALLOWED_MIMES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type: {mime or 'unknown'}. Use PDF, PNG, JPG or WEBP.",
+        )
+
+    filename = file.filename or "upload.pdf"
+    file_hash, storage_path = save_upload(contents, filename, mime)
+
+    # Sync LLM call — run in thread pool so we don't block the event loop
+    result = await asyncio.to_thread(extract_invoice, contents, filename, mime, "sales")
+    if result.error:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not extract data from {filename}: {result.error}",
+        )
+
+    now = _now()
+    inv = Invoice(
+        number=result.invoice_id or f"INV-PDF-{file_hash[:8].upper()}",
+        contact_name=(result.vendor or "Unknown customer").strip(),
+        issue_date=result.date or now[:10],
+        currency=(result.currency or "GBP").upper(),
+        status=DocumentStatus.DRAFT,
+        notes=(
+            f"Imported from {filename} "
+            f"(confidence {result.confidence:.0%}, file {storage_path})"
+        ),
+        subtotal=result.amount,
+        tax_total=0.0,
+        total=result.amount,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(inv)
+    db.commit()
+    db.refresh(inv)
+
+    line = InvoiceLine(
+        invoice_id=inv.id,
+        description=f"Extracted from {filename} — please verify",
+        quantity=1.0,
+        unit_price=result.amount,
+        tax_rate=0.0,
+        line_total=result.amount,
+    )
+    db.add(line)
+    db.commit()
+    db.refresh(line)
+
+    return _to_resp(inv, [line])

@@ -73,6 +73,162 @@ export interface VendorAlias {
   created_at: string
 }
 
+export type DocumentStatus =
+  | 'draft'
+  | 'awaiting_approval'
+  | 'awaiting_payment'
+  | 'paid'
+  | 'voided'
+
+export type StatementLineStatus =
+  | 'pending'
+  | 'matched'
+  | 'manual'
+  | 'transfer'
+  | 'discussed'
+
+export interface InvoiceLine {
+  id: number
+  invoice_id: number
+  description: string
+  quantity: number
+  unit_price: number
+  tax_rate: number
+  line_total: number
+  service_id: number | null
+}
+
+export interface Invoice {
+  id: number
+  number: string
+  contact_id: number | null
+  contact_name: string
+  reference: string | null
+  issue_date: string
+  due_date: string | null
+  subtotal: number
+  tax_total: number
+  total: number
+  paid_amount: number
+  outstanding: number
+  currency: string
+  status: DocumentStatus
+  notes: string | null
+  sent: boolean
+  lines: InvoiceLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface InvoiceLineCreate {
+  description: string
+  quantity: number
+  unit_price: number
+  tax_rate: number
+  service_id?: number | null
+}
+
+export interface InvoiceCreate {
+  number: string
+  contact_id?: number | null
+  contact_name: string
+  reference?: string | null
+  issue_date: string
+  due_date?: string | null
+  currency?: string
+  notes?: string | null
+  status?: DocumentStatus
+  lines: InvoiceLineCreate[]
+}
+
+export interface BillLine {
+  id: number
+  bill_id: number
+  description: string
+  quantity: number
+  unit_price: number
+  tax_rate: number
+  line_total: number
+  account_code: string | null
+}
+
+export interface Bill {
+  id: number
+  number: string | null
+  contact_id: number | null
+  contact_name: string
+  reference: string | null
+  issue_date: string
+  due_date: string | null
+  subtotal: number
+  tax_total: number
+  total: number
+  paid_amount: number
+  outstanding: number
+  currency: string
+  status: DocumentStatus
+  notes: string | null
+  lines: BillLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface BillLineCreate {
+  description: string
+  quantity: number
+  unit_price: number
+  tax_rate: number
+  account_code?: string | null
+}
+
+export interface BillCreate {
+  number?: string | null
+  contact_id?: number | null
+  contact_name: string
+  reference?: string | null
+  issue_date: string
+  due_date?: string | null
+  currency?: string
+  notes?: string | null
+  status?: DocumentStatus
+  lines: BillLineCreate[]
+}
+
+export interface BankAccount {
+  id: number
+  name: string
+  account_number: string | null
+  bank_name: string | null
+  currency: string
+  statement_balance: number
+  ooo_balance: number
+  balance_difference: number
+  pending_count: number
+  last_imported_at: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export interface StatementLine {
+  id: number
+  bank_account_id: number
+  date: string
+  description: string
+  reference: string | null
+  spent: number
+  received: number
+  balance_after: number | null
+  status: StatementLineStatus
+  matched_invoice_id: number | null
+  matched_bill_id: number | null
+  matched_journal_id: number | null
+  transfer_to_account_id: number | null
+  discussion: string | null
+  suggested_score: number | null
+  imported_at: string
+  reconciled_at: string | null
+}
+
 export interface UserProfile {
   id: number | null
   name: string
