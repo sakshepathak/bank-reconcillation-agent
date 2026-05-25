@@ -121,3 +121,64 @@ class ManualLedgerEntry(SQLModel, table=True):
     date: str                                # ISO date string
     description: str                         # raw bank description preserved
     created_at: str = Field(default="")
+
+
+class UserProfile(SQLModel, table=True):
+    """Single-row user profile. Created on first sidebar render if absent."""
+
+    __tablename__ = "user_profile"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(default="User")
+    role: str = Field(default="Accountant")
+    email: Optional[str] = None
+    updated_at: str = Field(default="")
+
+
+class CompanyProfile(SQLModel, table=True):
+    """Single-row company profile. Managed via the Settings tab."""
+
+    __tablename__ = "company_profile"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_name: str = Field(default="")
+    about: Optional[str] = None
+    industry: Optional[str] = None
+    website: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    registration_number: Optional[str] = None
+    vat_registered: bool = Field(default=False)
+    vat_number: Optional[str] = None
+    tax_treatment: str = Field(default="exclusive")  # exclusive | inclusive | exempt
+    updated_at: str = Field(default="")
+
+
+class ServiceOffered(SQLModel, table=True):
+    """Services or products the company offers — used for VAT/tax categorisation."""
+
+    __tablename__ = "service_offered"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    description: Optional[str] = None
+    service_category: str = Field(default="service")  # service | product
+    vat_applicable: bool = Field(default=True)
+    created_at: str = Field(default="")
+
+
+class Contact(SQLModel, table=True):
+    """Customers, suppliers, and internal contacts."""
+
+    __tablename__ = "contact"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    full_name: str
+    company: Optional[str] = None
+    contact_type: str = Field(default="customer")  # customer | supplier | internal | other
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")

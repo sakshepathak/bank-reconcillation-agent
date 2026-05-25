@@ -47,3 +47,8 @@ data/
 
 # Reference folder
 adv-rag-model/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/

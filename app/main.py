@@ -18,7 +18,7 @@ for path in (_ROOT, _HERE):
 import streamlit as st
 
 from memory.db import init_db
-from views import reconcile, audit, aliases, sidebar
+from views import reconcile, audit, aliases, sidebar, settings
 
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -59,10 +59,11 @@ st.markdown("""
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_recon, tab_audit, tab_aliases = st.tabs([
+tab_recon, tab_audit, tab_aliases, tab_settings = st.tabs([
     "Reconciliation",
     "Audit Trail",
     "Vendor Aliases",
+    "Settings",
 ])
 
 with tab_recon:
@@ -73,3 +74,6 @@ with tab_audit:
 
 with tab_aliases:
     aliases.render()
+
+with tab_settings:
+    settings.render()
