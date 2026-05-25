@@ -12,8 +12,9 @@ Every reconcile action updates the corresponding BankAccount.ooo_balance so
 the invariant `statement_balance == ooo_balance` (once all lines are
 reconciled) is maintained.
 """
+import asyncio
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from memory.models import (
@@ -26,6 +27,12 @@ from api.schemas.models import (
     TransferRequest, DiscussRequest,
 )
 from api.deps import get_db
+from engine.bank_statement_parser import parse_bank_statement
+
+_STATEMENT_MIMES = {
+    "text/csv", "application/vnd.ms-excel",
+    "application/pdf",
+}
 
 router = APIRouter(prefix="/statement-lines", tags=["statement-lines"])
 
@@ -119,6 +126,80 @@ def import_lines(body: StatementImportRequest, db: Session = Depends(get_db)):
     # Update the bank's recorded statement_balance to the latest line's running balance
     if body.lines and body.lines[-1].balance_after is not None:
         acc.statement_balance = body.lines[-1].balance_after
+    acc.last_imported_at = now
+    db.add(acc)
+
+    db.commit()
+    for s in created:
+        db.refresh(s)
+    return [_to_resp(s) for s in created]
+
+
+@router.post("/upload", response_model=list[StatementLineResponse], status_code=201)
+async def upload_statement(
+    bank_account_id: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Accept a CSV or PDF bank statement, parse it via the engine's
+    statement parser (CSV passthrough or LLM-extracted for PDFs), and
+    insert StatementLine rows for the named bank account.
+    """
+    acc = db.get(BankAccount, bank_account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="Bank account not found")
+
+    contents = await file.read()
+    mime = (file.content_type or "").lower()
+    if mime not in _STATEMENT_MIMES:
+        # Be lenient on csv mime variations
+        if (file.filename or "").lower().endswith(".csv"):
+            mime = "text/csv"
+        elif (file.filename or "").lower().endswith(".pdf"):
+            mime = "application/pdf"
+        else:
+            raise HTTPException(
+                status_code=415,
+                detail=f"Unsupported file type: {mime or 'unknown'}. Use CSV or PDF.",
+            )
+
+    try:
+        df = await asyncio.to_thread(parse_bank_statement, contents, mime)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=422, detail=f"Could not parse statement: {e}",
+        )
+
+    now = _now()
+    created: list[StatementLine] = []
+    last_balance_after: float | None = None
+
+    for _, row in df.iterrows():
+        amount = float(row.get("amount", 0.0))
+        balance_after = row.get("balance_after")
+        if balance_after is not None and not (isinstance(balance_after, float) and balance_after != balance_after):  # NaN check
+            try:
+                last_balance_after = float(balance_after)
+            except (TypeError, ValueError):
+                last_balance_after = None
+
+        s = StatementLine(
+            bank_account_id=bank_account_id,
+            date=str(row.get("date", "")),
+            description=str(row.get("description", "")),
+            reference=None,
+            spent=abs(amount) if amount < 0 else 0.0,
+            received=amount if amount > 0 else 0.0,
+            balance_after=last_balance_after,
+            status=StatementLineStatus.PENDING,
+            imported_at=now,
+        )
+        db.add(s)
+        created.append(s)
+
+    if last_balance_after is not None:
+        acc.statement_balance = last_balance_after
     acc.last_imported_at = now
     db.add(acc)
 
