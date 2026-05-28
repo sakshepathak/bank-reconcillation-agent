@@ -42,6 +42,7 @@ Thumbs.db
 
 # Databases
 *.db
+*.db.backup*
 *.sqlite
 data/
 

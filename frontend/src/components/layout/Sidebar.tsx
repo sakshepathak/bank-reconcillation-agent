@@ -1,9 +1,11 @@
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard, RefreshCw, CheckSquare, Receipt, FileSpreadsheet,
-  Landmark, Users, FileText, BookOpen, Settings,
+  LayoutDashboard, RefreshCw, AlertTriangle, Receipt, FileSpreadsheet,
+  Landmark, Users, FileText, BookOpen, Settings, LogOut,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/lib/auth-context'
+import OrgSwitcher from '@/components/OrgSwitcher'
 
 const NAV = [
   { to: '/dashboard',       icon: LayoutDashboard,  label: 'Dashboard' },
@@ -11,7 +13,7 @@ const NAV = [
   { to: '/purchases',       icon: FileSpreadsheet,  label: 'Purchases' },
   { to: '/bank-accounts',   icon: Landmark,         label: 'Bank Accounts' },
   { to: '/reconciliation',  icon: RefreshCw,        label: 'Reconcile' },
-  { to: '/review',          icon: CheckSquare,      label: 'Review Queue' },
+  { to: '/exceptions',      icon: AlertTriangle,    label: 'Exceptions' },
   { to: '/contacts',        icon: Users,            label: 'Contacts' },
   { to: '/audit',           icon: FileText,         label: 'Audit Trail' },
   { to: '/aliases',         icon: BookOpen,         label: 'Vendor Aliases' },
@@ -19,6 +21,8 @@ const NAV = [
 ]
 
 export default function Sidebar() {
+  const { user, logout } = useAuth()
+
   return (
     <aside className="w-56 h-full flex-shrink-0 flex flex-col bg-gradient-to-b from-indigo-700 to-indigo-500 shadow-xl">
       {/* Brand */}
@@ -32,6 +36,11 @@ export default function Sidebar() {
             <p className="text-white/60 text-[10px]">Bank Reconciliation</p>
           </div>
         </div>
+      </div>
+
+      {/* Org switcher */}
+      <div className="px-3 pt-3 pb-1">
+        <OrgSwitcher />
       </div>
 
       {/* Nav */}
@@ -55,9 +64,30 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Footer */}
-      <div className="px-4 py-3 border-t border-white/10">
-        <p className="text-white/40 text-xs text-center">OOO · v1</p>
+      {/* User + logout */}
+      <div className="px-3 py-3 border-t border-white/10 space-y-2">
+        {user && (
+          <div className="px-2 py-1">
+            <p className="text-white text-sm font-medium truncate" title={user.name}>
+              {user.name || 'User'}
+            </p>
+            <p className="text-white/55 text-[11px] truncate" title={user.email}>
+              {user.email}
+            </p>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => { logout().catch(() => { /* swallow — UI bounces to /login regardless */ }) }}
+          className={cn(
+            'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium',
+            'text-white/75 hover:bg-white/10 hover:text-white transition-colors',
+          )}
+        >
+          <LogOut className="w-4 h-4" />
+          Logout
+        </button>
+        <p className="text-white/40 text-[10px] text-center pt-1">OOO · v1</p>
       </div>
     </aside>
   )

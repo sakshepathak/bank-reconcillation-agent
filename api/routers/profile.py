@@ -2,9 +2,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
-from memory.models import UserProfile
+from memory.models import User, UserProfile
 from api.schemas.models import UserProfileResponse, UserProfileUpdate
-from api.deps import get_db
+from api.deps import get_db, require_user
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -18,7 +18,12 @@ def _default() -> UserProfileResponse:
 
 
 @router.get("/", response_model=UserProfileResponse)
-def get_profile(db: Session = Depends(get_db)):
+def get_profile(
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_user),
+):
+    # Legacy single-row table. Being superseded by the real `user` table from auth;
+    # kept here for the Settings page until a follow-up step migrates it.
     p = db.exec(select(UserProfile)).first()
     if not p:
         return _default()
@@ -26,7 +31,11 @@ def get_profile(db: Session = Depends(get_db)):
 
 
 @router.put("/", response_model=UserProfileResponse)
-def upsert_profile(body: UserProfileUpdate, db: Session = Depends(get_db)):
+def upsert_profile(
+    body: UserProfileUpdate,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_user),
+):
     p = db.exec(select(UserProfile)).first()
     if p:
         for k, v in body.model_dump(exclude_unset=True).items():

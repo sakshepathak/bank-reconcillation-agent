@@ -3,7 +3,7 @@ from sqlmodel import Session, select
 
 from memory.models import Contact, MatchRecord
 from api.schemas.models import DashboardStats
-from api.deps import get_db
+from api.deps import get_db, get_current_org_id
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -11,9 +11,12 @@ _MATCHED = {"exact", "fuzzy", "one_to_many", "many_to_one", "human_corrected"}
 
 
 @router.get("/stats", response_model=DashboardStats)
-def dashboard_stats(db: Session = Depends(get_db)):
-    records = db.exec(select(MatchRecord)).all()
-    contacts_count = len(db.exec(select(Contact)).all())
+def dashboard_stats(
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    records = db.exec(select(MatchRecord).where(MatchRecord.org_id == org_id)).all()
+    contacts_count = len(db.exec(select(Contact).where(Contact.org_id == org_id)).all())
 
     run_ids: set[str] = set()
     total = matched = pending = 0

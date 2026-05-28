@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, X, Check } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -227,7 +228,14 @@ export default function Contacts() {
                     key={c.id}
                     className="border-b last:border-0 hover:bg-muted/30 transition-colors"
                   >
-                    <td className="px-4 py-2.5 font-medium">{c.full_name}</td>
+                    <td className="px-4 py-2.5 font-medium">
+                      <Link
+                        to={`/contacts/${c.id}`}
+                        className="text-primary hover:underline"
+                      >
+                        {c.full_name}
+                      </Link>
+                    </td>
                     <td className="px-4 py-2.5 text-muted-foreground">{c.company ?? '—'}</td>
                     <td className="px-4 py-2.5">
                       <Badge variant={TYPE_VARIANT[c.contact_type as ContactType] ?? 'muted'}>

@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from memory.models import MatchRecord
 from api.schemas.models import MatchResponse
-from api.deps import get_db
+from api.deps import get_db, get_current_org_id
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -40,8 +40,9 @@ def get_audit(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
 ):
-    q = select(MatchRecord)
+    q = select(MatchRecord).where(MatchRecord.org_id == org_id)
     if run_id:
         q = q.where(MatchRecord.run_id == run_id)
     q = q.offset(skip).limit(limit)
@@ -49,8 +50,12 @@ def get_audit(
 
 
 @router.get("/export")
-def export_audit(run_id: str | None = None, db: Session = Depends(get_db)):
-    q = select(MatchRecord)
+def export_audit(
+    run_id: str | None = None,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    q = select(MatchRecord).where(MatchRecord.org_id == org_id)
     if run_id:
         q = q.where(MatchRecord.run_id == run_id)
     records = db.exec(q).all()

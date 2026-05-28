@@ -73,6 +73,21 @@ class ContactResponse(BaseModel):
     updated_at: str
 
 
+class ContactDocSummary(BaseModel):
+    """Slimmed Invoice/Bill row shown on the Contact detail page."""
+    id: int
+    number: Optional[str]
+    issue_date: str
+    total: float
+    outstanding: float
+    currency: str
+    status: str
+
+
+# ContactDetailResponse is defined further down — after AliasResponse — so the
+# `aliases: list[AliasResponse]` field resolves cleanly without forward refs.
+
+
 # ── Company & Services ────────────────────────────────────────────────────────
 
 class CompanyResponse(BaseModel):
@@ -125,15 +140,34 @@ class AliasResponse(BaseModel):
     id: int
     alias: str
     canonical_name: str
+    contact_id: Optional[int] = None
     confidence: float
     source: str
     created_at: str
 
 
 class AliasCreate(BaseModel):
+    """
+    Create an alias linked to a Contact. `canonical_name` is set from the
+    target Contact's `full_name` automatically — clients only need to send
+    the raw alias string + the contact_id it maps to.
+
+    `canonical_name` is accepted (and used) when contact_id is omitted, for
+    backwards-compat with callers that don't know the contact yet (the old
+    free-string flow on the standalone Aliases page).
+    """
     alias: str
-    canonical_name: str
+    contact_id: Optional[int] = None
+    canonical_name: Optional[str] = None
     confidence: float = 1.0
+
+
+class ContactDetailResponse(BaseModel):
+    """Bundle returned by GET /contacts/{id}/detail."""
+    contact: ContactResponse
+    invoices: list[ContactDocSummary]
+    bills: list[ContactDocSummary]
+    aliases: list[AliasResponse]
 
 
 # ── Bank Accounts ────────────────────────────────────────────────────────────

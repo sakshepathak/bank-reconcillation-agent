@@ -68,9 +68,27 @@ export interface VendorAlias {
   id: number
   alias: string
   canonical_name: string
+  contact_id: number | null
   confidence: number
   source: string
   created_at: string
+}
+
+export interface ContactDocSummary {
+  id: number
+  number: string | null
+  issue_date: string
+  total: number
+  outstanding: number
+  currency: string
+  status: DocumentStatus
+}
+
+export interface ContactDetail {
+  contact: Contact
+  invoices: ContactDocSummary[]
+  bills: ContactDocSummary[]
+  aliases: VendorAlias[]
 }
 
 export type DocumentStatus =

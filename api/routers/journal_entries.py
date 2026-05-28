@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from memory.models import JournalEntry
 from api.schemas.models import JournalEntryCreate, JournalEntryResponse
-from api.deps import get_db
+from api.deps import get_db, get_current_org_id
 
 router = APIRouter(prefix="/journal-entries", tags=["journal-entries"])
 
@@ -24,13 +24,23 @@ def _to_resp(j: JournalEntry) -> JournalEntryResponse:
 
 
 @router.get("/", response_model=list[JournalEntryResponse])
-def list_entries(db: Session = Depends(get_db)):
-    return [_to_resp(j) for j in db.exec(select(JournalEntry)).all()]
+def list_entries(
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    return [
+        _to_resp(j)
+        for j in db.exec(select(JournalEntry).where(JournalEntry.org_id == org_id)).all()
+    ]
 
 
 @router.post("/", response_model=JournalEntryResponse, status_code=201)
-def create_entry(body: JournalEntryCreate, db: Session = Depends(get_db)):
-    j = JournalEntry(**body.model_dump(), created_at=_now())
+def create_entry(
+    body: JournalEntryCreate,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    j = JournalEntry(**body.model_dump(), org_id=org_id, created_at=_now())
     db.add(j)
     db.commit()
     db.refresh(j)
@@ -38,9 +48,13 @@ def create_entry(body: JournalEntryCreate, db: Session = Depends(get_db)):
 
 
 @router.delete("/{entry_id}", status_code=204)
-def delete_entry(entry_id: int, db: Session = Depends(get_db)):
+def delete_entry(
+    entry_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
     j = db.get(JournalEntry, entry_id)
-    if not j:
+    if not j or j.org_id != org_id:
         raise HTTPException(status_code=404, detail="Journal entry not found")
     db.delete(j)
     db.commit()

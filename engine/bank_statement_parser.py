@@ -78,9 +78,121 @@ def parse_bank_statement(file_bytes: bytes, mime: str) -> pd.DataFrame:
 
 
 # ─── CSV ────────────────────────────────────────────────────────────────────
+#
+# Canonical output columns:  date (ISO YYYY-MM-DD), description, amount (signed),
+#                            balance_after (nullable).
+#
+# Handles every common UK / US / AU bank export shape:
+#   TIDE       — Date, Amount (signed), Payee, Description, Reference
+#   Barclays   — Date, Description, Amount (signed)
+#   HSBC       — Date, Description, Debit, Credit (separate columns)
+#   Lloyds     — Transaction Date, …, Debit Amount, Credit Amount
+#   NatWest    — Date, Type, Description, Value, Balance
+#   Wise / Revolut — similar shape to TIDE
+#
+# Column matching is case-insensitive and whitespace-tolerant.
+
+_DATE_COLUMNS = [
+    "date", "transaction date", "posting date", "booked date", "trans date",
+    "value date", "completed date", "started date",
+]
+_AMOUNT_COLUMNS = ["amount", "value", "transaction amount"]
+_DEBIT_COLUMNS = ["debit", "debit amount", "money out", "paid out", "withdrawal", "withdrawals", "out", "spent"]
+_CREDIT_COLUMNS = ["credit", "credit amount", "money in", "paid in", "deposit", "deposits", "in", "received"]
+_DESC_COLUMNS = ["description", "memo", "narrative", "details", "transaction details", "narration"]
+_PAYEE_COLUMNS = ["payee", "merchant", "counterparty", "name", "beneficiary"]
+_BALANCE_COLUMNS = ["balance", "running balance", "balance after"]
+
+
+def _pick_column(cols: list[str], candidates: list[str]) -> str | None:
+    for cand in candidates:
+        if cand in cols:
+            return cand
+    return None
+
+
+def _clean_money(series: pd.Series) -> pd.Series:
+    """Strip currency symbols, thousand separators, parenthesised negatives."""
+    if series.dtype.kind in "fi":
+        return series.fillna(0).astype(float)
+    s = series.fillna("").astype(str)
+    s = s.str.replace(r"\((.*?)\)", r"-\1", regex=True)
+    s = s.str.replace(r"[£$€¥₹,\s]", "", regex=True)
+    return pd.to_numeric(s, errors="coerce").fillna(0).astype(float)
+
 
 def _parse_csv(file_bytes: bytes) -> pd.DataFrame:
-    return pd.read_csv(io.BytesIO(file_bytes))
+    """
+    Parse a bank statement CSV into the canonical DataFrame.
+
+    Robust to capitalised vs lowercase columns, DD-MM-YYYY vs ISO dates,
+    signed Amount vs split Debit/Credit columns, currency symbols, commas,
+    parenthesised negatives, and separate Payee + Description columns.
+    """
+    # Try the common encodings — UTF-8 first, then fall back
+    raw = None
+    for enc in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
+        try:
+            raw = pd.read_csv(io.BytesIO(file_bytes), encoding=enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if raw is None:
+        raise ValueError("Could not decode CSV in any common encoding")
+
+    # Normalise column names
+    raw.columns = [str(c).strip().lower() for c in raw.columns]
+    cols = list(raw.columns)
+
+    # ── Date ─────────────────────────────────────────────────────────────────
+    date_col = _pick_column(cols, _DATE_COLUMNS)
+    if not date_col:
+        raise ValueError(f"No date column found. Got: {cols}")
+    dates = pd.to_datetime(raw[date_col], dayfirst=True, errors="coerce")
+    iso_dates = dates.dt.strftime("%Y-%m-%d")
+
+    # ── Amount ───────────────────────────────────────────────────────────────
+    amount_col = _pick_column(cols, _AMOUNT_COLUMNS)
+    if amount_col:
+        amounts = _clean_money(raw[amount_col])
+    else:
+        debit_col = _pick_column(cols, _DEBIT_COLUMNS)
+        credit_col = _pick_column(cols, _CREDIT_COLUMNS)
+        if not debit_col and not credit_col:
+            raise ValueError(f"No 'Amount' or 'Debit'/'Credit' columns. Got: {cols}")
+        debits = _clean_money(raw[debit_col]) if debit_col else pd.Series(0.0, index=raw.index)
+        credits = _clean_money(raw[credit_col]) if credit_col else pd.Series(0.0, index=raw.index)
+        amounts = credits - debits
+
+    # ── Description (Payee + Description if both present) ────────────────────
+    desc_col = _pick_column(cols, _DESC_COLUMNS)
+    payee_col = _pick_column(cols, _PAYEE_COLUMNS)
+    payee = raw[payee_col].fillna("").astype(str).str.strip() if payee_col else None
+    desc = raw[desc_col].fillna("").astype(str).str.strip() if desc_col else None
+    if payee is not None and desc is not None:
+        descriptions = pd.Series(
+            [(p + " — " + d) if p and d else (p or d) for p, d in zip(payee, desc)],
+            index=raw.index,
+        )
+    elif desc is not None:
+        descriptions = desc
+    elif payee is not None:
+        descriptions = payee
+    else:
+        raise ValueError(f"No description or payee column found. Got: {cols}")
+
+    # ── Balance (optional) ───────────────────────────────────────────────────
+    balance_col = _pick_column(cols, _BALANCE_COLUMNS)
+    balances = _clean_money(raw[balance_col]) if balance_col else pd.Series([None] * len(raw))
+
+    result = pd.DataFrame({
+        "date": iso_dates,
+        "description": descriptions,
+        "amount": amounts,
+        "balance_after": balances,
+    })
+    result = result.dropna(subset=["date"]).reset_index(drop=True)
+    return result
 
 
 # ─── PDF: text-first, vision-fallback ───────────────────────────────────────

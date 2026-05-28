@@ -3,7 +3,7 @@ from sqlmodel import Session, select
 
 from memory.models import MatchRecord
 from api.schemas.models import MatchResponse, RunSummary
-from api.deps import get_db
+from api.deps import get_db, get_current_org_id
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -53,21 +53,42 @@ def _match_to_response(r: MatchRecord) -> MatchResponse:
 
 
 @router.get("/", response_model=list[RunSummary])
-def list_runs(db: Session = Depends(get_db)):
-    return _build_runs(db.exec(select(MatchRecord)).all())
+def list_runs(
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    return _build_runs(
+        db.exec(select(MatchRecord).where(MatchRecord.org_id == org_id)).all()
+    )
 
 
 @router.get("/{run_id}", response_model=RunSummary)
-def get_run(run_id: str, db: Session = Depends(get_db)):
-    records = db.exec(select(MatchRecord).where(MatchRecord.run_id == run_id)).all()
+def get_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    records = db.exec(
+        select(MatchRecord).where(
+            MatchRecord.org_id == org_id, MatchRecord.run_id == run_id,
+        )
+    ).all()
     if not records:
         raise HTTPException(status_code=404, detail="Run not found")
     return _build_runs(records)[0]
 
 
 @router.get("/{run_id}/matches", response_model=list[MatchResponse])
-def run_matches(run_id: str, db: Session = Depends(get_db)):
-    records = db.exec(select(MatchRecord).where(MatchRecord.run_id == run_id)).all()
+def run_matches(
+    run_id: str,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    records = db.exec(
+        select(MatchRecord).where(
+            MatchRecord.org_id == org_id, MatchRecord.run_id == run_id,
+        )
+    ).all()
     if not records:
         raise HTTPException(status_code=404, detail="Run not found")
     return [_match_to_response(r) for r in records]

@@ -24,6 +24,8 @@ from memory.db import init_db
 from api.routers import (
     health, dashboard, runs, matches, contacts, company, aliases, audit, profile,
     bank_accounts, invoices, bills, journal_entries, statement_lines,
+    exceptions as exceptions_router,
+    auth, orgs,
 )
 
 app = FastAPI(
@@ -58,6 +60,8 @@ def on_startup() -> None:
 PREFIX = "/api/v1"
 
 app.include_router(health.router)
+app.include_router(auth.router,      prefix=PREFIX)
+app.include_router(orgs.router,      prefix=PREFIX)
 app.include_router(dashboard.router, prefix=PREFIX)
 app.include_router(runs.router,      prefix=PREFIX)
 app.include_router(matches.router,   prefix=PREFIX)
@@ -73,3 +77,4 @@ app.include_router(invoices.router,        prefix=PREFIX)
 app.include_router(bills.router,           prefix=PREFIX)
 app.include_router(journal_entries.router, prefix=PREFIX)
 app.include_router(statement_lines.router, prefix=PREFIX)
+app.include_router(exceptions_router.router, prefix=PREFIX)

@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, X, Receipt, Upload, Loader2, AlertCircle } from 'lucide-react'
+import { Plus, Trash2, X, Receipt, Upload } from 'lucide-react'
+import { UploadDock, type UploadItem } from '@/components/UploadDock'
+import { humanizeUploadError } from '@/lib/upload-errors'
 import { api } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -46,21 +48,19 @@ const newLine = (): InvoiceLineCreate => ({
   tax_rate: 0,
 })
 
-type UploadState = {
-  current: number
-  total: number
-  filename: string
-  errors: { filename: string; message: string }[]
-} | null
-
 export default function Sales() {
   const queryClient = useQueryClient()
   const [tab, setTab] = useState<Tab>('all')
   const [panelOpen, setPanelOpen] = useState(false)
   const [viewing, setViewing] = useState<Invoice | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
-  const [uploading, setUploading] = useState<UploadState>(null)
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const isUploading = uploadItems.some((i) => i.status === 'queued' || i.status === 'uploading')
+
+  const patchItem = (id: string, updates: Partial<UploadItem>) =>
+    setUploadItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...updates } : it)))
 
   // Create form state
   const [form, setForm] = useState({
@@ -110,32 +110,74 @@ export default function Sales() {
     })
   }
 
+  const runUpload = async (item: UploadItem) => {
+    patchItem(item.id, { status: 'uploading', error: undefined })
+    try {
+      await uploadOne(item.file)
+      patchItem(item.id, { status: 'done' })
+      queryClient.invalidateQueries({ queryKey: ['invoices'] })
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err)
+      patchItem(item.id, { status: 'failed', error: humanizeUploadError(raw) })
+    }
+  }
+
   const handleFiles = async (filesList: FileList | null) => {
     if (!filesList || filesList.length === 0) return
     const files = Array.from(filesList)
-    const errors: { filename: string; message: string }[] = []
 
-    setUploading({ current: 0, total: files.length, filename: files[0].name, errors: [] })
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i]
-      setUploading((prev) =>
-        prev ? { ...prev, current: i + 1, filename: f.name } : prev,
+    const newItems: UploadItem[] = files.map((f) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file: f,
+      filename: f.name,
+      status: 'queued',
+      retryCount: 0,
+    }))
+    setUploadItems((prev) => [...prev, ...newItems])
+
+    // Concurrency 2 — Gemini free tier rate-limits at ~15 RPM. Two in parallel
+    // gives a good balance of speed vs rate-limit hits. The backend also
+    // retries transient errors with backoff, so an occasional hit just slows
+    // things down rather than failing the file.
+    const CONCURRENCY = 2
+    for (let i = 0; i < newItems.length; i += CONCURRENCY) {
+      const batch = newItems.slice(i, i + CONCURRENCY)
+      await Promise.all(batch.map(runUpload))
+    }
+
+    // Auto-clear successful uploads if nothing failed in the whole dock
+    setTimeout(() => {
+      setUploadItems((prev) =>
+        prev.some((it) => it.status === 'failed')
+          ? prev
+          : prev.filter((it) => it.status !== 'done'),
       )
-      try {
-        await uploadOne(f)
-        queryClient.invalidateQueries({ queryKey: ['invoices'] })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        errors.push({ filename: f.name, message: msg })
-      }
-    }
-    setUploading((prev) => (prev ? { ...prev, errors } : prev))
-    // Auto-dismiss after a short delay if there are no errors
-    if (errors.length === 0) {
-      setTimeout(() => setUploading(null), 1500)
-    }
+    }, 3000)
+
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
+
+  const retryItem = async (item: UploadItem) => {
+    const next: UploadItem = { ...item, retryCount: item.retryCount + 1 }
+    patchItem(next.id, { retryCount: next.retryCount })
+    await runUpload(next)
+    // Auto-clear if it succeeded and no failures remain
+    setTimeout(() => {
+      setUploadItems((prev) =>
+        prev.some((it) => it.status === 'failed')
+          ? prev
+          : prev.filter((it) => it.status !== 'done'),
+      )
+    }, 2000)
+  }
+
+  const retryAllFailed = () => {
+    uploadItems.filter((i) => i.status === 'failed').forEach(retryItem)
+  }
+
+  const dismissItem = (id: string) =>
+    setUploadItems((prev) => prev.filter((i) => i.id !== id))
+  const dismissAll = () => setUploadItems([])
 
   const counts: Record<Tab, number> = {
     all: invoices?.length ?? 0,
@@ -213,7 +255,7 @@ export default function Sales() {
             size="sm"
             variant="outline"
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading !== null}
+            disabled={isUploading}
           >
             <Upload className="w-3.5 h-3.5 mr-1.5" />
             Import PDF
@@ -364,47 +406,14 @@ export default function Sales() {
         </CardContent>
       </Card>
 
-      {/* Upload progress overlay */}
-      {uploading && (
-        <div className="fixed bottom-6 right-6 z-50 bg-foreground text-background rounded-lg shadow-xl px-4 py-3 max-w-md">
-          <div className="flex items-center gap-3">
-            {uploading.current < uploading.total ? (
-              <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
-            ) : uploading.errors.length === 0 ? (
-              <Receipt className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium truncate">
-                {uploading.current < uploading.total
-                  ? `Importing ${uploading.filename}…`
-                  : uploading.errors.length === 0
-                    ? `Imported ${uploading.total} file${uploading.total === 1 ? '' : 's'}`
-                    : `Done — ${uploading.errors.length} of ${uploading.total} failed`}
-              </p>
-              <p className="text-xs opacity-70">
-                {uploading.current} of {uploading.total}
-              </p>
-            </div>
-            <button
-              onClick={() => setUploading(null)}
-              className="text-background/60 hover:text-background flex-shrink-0"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          {uploading.errors.length > 0 && uploading.current >= uploading.total && (
-            <div className="mt-2 pt-2 border-t border-background/20 space-y-1">
-              {uploading.errors.map((e, i) => (
-                <p key={i} className="text-xs opacity-80">
-                  <span className="font-mono">{e.filename}</span>: {e.message}
-                </p>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Upload dock — visible whenever there are items, persistent for failures */}
+      <UploadDock
+        items={uploadItems}
+        onRetry={retryItem}
+        onRetryAll={retryAllFailed}
+        onDismiss={dismissItem}
+        onDismissAll={dismissAll}
+      />
 
       {/* Slide-in panel */}
       {panelOpen && (

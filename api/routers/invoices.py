@@ -8,11 +8,39 @@ from memory.models import Invoice, InvoiceLine, DocumentStatus
 from api.schemas.models import (
     InvoiceCreate, InvoiceResponse, InvoiceUpdate, InvoiceLineResponse,
 )
-from api.deps import get_db
+from api.deps import get_db, get_current_org_id
+from engine.contacts import upsert_contact
 from engine.file_store import save_upload
 from mcp_server.tools.invoice_extractor import extract_invoice
 
 _ALLOWED_MIMES = {"application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp"}
+
+_TRANSIENT_ERROR_HINTS = (
+    "rate", "429", "timeout", "unavailable", "503", "502", "504",
+    "deadline", "overload", "exhausted",
+)
+
+
+async def _extract_with_retry(contents: bytes, filename: str, mime: str, doc_type: str):
+    """
+    Up to 3 attempts on transient errors with growing backoff (2s, 5s).
+    The underlying LLM layer also has Gemini → OpenRouter fallback, so a
+    single file can get up to 6 LLM tries before we give up.
+    """
+    import asyncio
+    backoffs = [2.0, 5.0]
+    last = None
+    for attempt in range(3):
+        result = await asyncio.to_thread(extract_invoice, contents, filename, mime, doc_type)
+        if not result.error:
+            return result
+        last = result
+        err_low = result.error.lower()
+        is_transient = any(h in err_low for h in _TRANSIENT_ERROR_HINTS)
+        if not is_transient or attempt >= 2:
+            return result
+        await asyncio.sleep(backoffs[attempt])
+    return last
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -51,33 +79,61 @@ def _to_resp(inv: Invoice, lines: list[InvoiceLine]) -> InvoiceResponse:
     )
 
 
+def _load_invoice_for_org(db: Session, invoice_id: int, org_id: int) -> Invoice:
+    inv = db.get(Invoice, invoice_id)
+    if not inv or inv.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return inv
+
+
 @router.get("/", response_model=list[InvoiceResponse])
-def list_invoices(status: str | None = None, db: Session = Depends(get_db)):
-    q = select(Invoice)
+def list_invoices(
+    status: str | None = None,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    q = select(Invoice).where(Invoice.org_id == org_id)
     if status:
         q = q.where(Invoice.status == status)
     invs = db.exec(q).all()
     out = []
     for inv in invs:
-        lines = db.exec(select(InvoiceLine).where(InvoiceLine.invoice_id == inv.id)).all()
+        lines = db.exec(
+            select(InvoiceLine).where(InvoiceLine.invoice_id == inv.id, InvoiceLine.org_id == org_id)
+        ).all()
         out.append(_to_resp(inv, lines))
     return out
 
 
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
-def get_invoice(invoice_id: int, db: Session = Depends(get_db)):
-    inv = db.get(Invoice, invoice_id)
-    if not inv:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    lines = db.exec(select(InvoiceLine).where(InvoiceLine.invoice_id == invoice_id)).all()
+def get_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    inv = _load_invoice_for_org(db, invoice_id, org_id)
+    lines = db.exec(
+        select(InvoiceLine).where(InvoiceLine.invoice_id == invoice_id, InvoiceLine.org_id == org_id)
+    ).all()
     return _to_resp(inv, lines)
 
 
 @router.post("/", response_model=InvoiceResponse, status_code=201)
-def create_invoice(body: InvoiceCreate, db: Session = Depends(get_db)):
+def create_invoice(
+    body: InvoiceCreate,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
     now = _now()
+    # If no contact_id supplied, auto-upsert one from the typed contact_name.
+    contact_id = body.contact_id
+    if contact_id is None and body.contact_name.strip():
+        contact_id = upsert_contact(
+            db, org_id=org_id, name=body.contact_name, contact_type="customer",
+        ).id
     inv = Invoice(
-        number=body.number, contact_id=body.contact_id, contact_name=body.contact_name,
+        org_id=org_id,
+        number=body.number, contact_id=contact_id, contact_name=body.contact_name,
         reference=body.reference, issue_date=body.issue_date, due_date=body.due_date,
         currency=body.currency, notes=body.notes,
         status=DocumentStatus(body.status),
@@ -91,6 +147,7 @@ def create_invoice(body: InvoiceCreate, db: Session = Depends(get_db)):
     for ln in body.lines:
         line_total = round(ln.quantity * ln.unit_price, 2)
         l = InvoiceLine(
+            org_id=org_id,
             invoice_id=inv.id, description=ln.description, quantity=ln.quantity,
             unit_price=ln.unit_price, tax_rate=ln.tax_rate, line_total=line_total,
             service_id=ln.service_id,
@@ -109,10 +166,13 @@ def create_invoice(body: InvoiceCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/{invoice_id}", response_model=InvoiceResponse)
-def update_invoice(invoice_id: int, body: InvoiceUpdate, db: Session = Depends(get_db)):
-    inv = db.get(Invoice, invoice_id)
-    if not inv:
-        raise HTTPException(status_code=404, detail="Invoice not found")
+def update_invoice(
+    invoice_id: int,
+    body: InvoiceUpdate,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    inv = _load_invoice_for_org(db, invoice_id, org_id)
     data = body.model_dump(exclude_unset=True)
     if "status" in data:
         data["status"] = DocumentStatus(data["status"])
@@ -122,16 +182,22 @@ def update_invoice(invoice_id: int, body: InvoiceUpdate, db: Session = Depends(g
     db.add(inv)
     db.commit()
     db.refresh(inv)
-    lines = db.exec(select(InvoiceLine).where(InvoiceLine.invoice_id == invoice_id)).all()
+    lines = db.exec(
+        select(InvoiceLine).where(InvoiceLine.invoice_id == invoice_id, InvoiceLine.org_id == org_id)
+    ).all()
     return _to_resp(inv, lines)
 
 
 @router.delete("/{invoice_id}", status_code=204)
-def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
-    inv = db.get(Invoice, invoice_id)
-    if not inv:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    lines = db.exec(select(InvoiceLine).where(InvoiceLine.invoice_id == invoice_id)).all()
+def delete_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    inv = _load_invoice_for_org(db, invoice_id, org_id)
+    lines = db.exec(
+        select(InvoiceLine).where(InvoiceLine.invoice_id == invoice_id, InvoiceLine.org_id == org_id)
+    ).all()
     for l in lines:
         db.delete(l)
     db.delete(inv)
@@ -139,7 +205,11 @@ def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/upload", response_model=InvoiceResponse, status_code=201)
-async def upload_invoice(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_invoice(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
     """
     Accept a PDF/image of a sales invoice. The LLM extractor pulls out
     customer, date, amount and currency, then a draft Invoice is created
@@ -157,8 +227,8 @@ async def upload_invoice(file: UploadFile = File(...), db: Session = Depends(get
     filename = file.filename or "upload.pdf"
     file_hash, storage_path = save_upload(contents, filename, mime)
 
-    # Sync LLM call — run in thread pool so we don't block the event loop
-    result = await asyncio.to_thread(extract_invoice, contents, filename, mime, "sales")
+    # Sync LLM call, run in thread pool + auto-retry transient failures
+    result = await _extract_with_retry(contents, filename, mime, "sales")
     if result.error:
         raise HTTPException(
             status_code=422,
@@ -166,9 +236,13 @@ async def upload_invoice(file: UploadFile = File(...), db: Session = Depends(get
         )
 
     now = _now()
+    customer_name = (result.vendor or "Unknown customer").strip()
+    contact = upsert_contact(db, org_id=org_id, name=customer_name, contact_type="customer")
     inv = Invoice(
+        org_id=org_id,
         number=result.invoice_id or f"INV-PDF-{file_hash[:8].upper()}",
-        contact_name=(result.vendor or "Unknown customer").strip(),
+        contact_id=contact.id,
+        contact_name=customer_name,
         issue_date=result.date or now[:10],
         currency=(result.currency or "GBP").upper(),
         status=DocumentStatus.DRAFT,
@@ -187,6 +261,7 @@ async def upload_invoice(file: UploadFile = File(...), db: Session = Depends(get
     db.refresh(inv)
 
     line = InvoiceLine(
+        org_id=org_id,
         invoice_id=inv.id,
         description=f"Extracted from {filename} — please verify",
         quantity=1.0,

@@ -8,11 +8,35 @@ from memory.models import Bill, BillLine, DocumentStatus
 from api.schemas.models import (
     BillCreate, BillResponse, BillUpdate, BillLineResponse,
 )
-from api.deps import get_db
+from api.deps import get_db, get_current_org_id
+from engine.contacts import upsert_contact
 from engine.file_store import save_upload
 from mcp_server.tools.invoice_extractor import extract_invoice
 
 _ALLOWED_MIMES = {"application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp"}
+
+_TRANSIENT_ERROR_HINTS = (
+    "rate", "429", "timeout", "unavailable", "503", "502", "504",
+    "deadline", "overload", "exhausted",
+)
+
+
+async def _extract_with_retry(contents: bytes, filename: str, mime: str, doc_type: str):
+    """3 attempts with 2s / 5s backoff on transient errors."""
+    import asyncio
+    backoffs = [2.0, 5.0]
+    last = None
+    for attempt in range(3):
+        result = await asyncio.to_thread(extract_invoice, contents, filename, mime, doc_type)
+        if not result.error:
+            return result
+        last = result
+        err_low = result.error.lower()
+        is_transient = any(h in err_low for h in _TRANSIENT_ERROR_HINTS)
+        if not is_transient or attempt >= 2:
+            return result
+        await asyncio.sleep(backoffs[attempt])
+    return last
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 
@@ -51,33 +75,60 @@ def _to_resp(b: Bill, lines: list[BillLine]) -> BillResponse:
     )
 
 
+def _load_bill_for_org(db: Session, bill_id: int, org_id: int) -> Bill:
+    b = db.get(Bill, bill_id)
+    if not b or b.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    return b
+
+
 @router.get("/", response_model=list[BillResponse])
-def list_bills(status: str | None = None, db: Session = Depends(get_db)):
-    q = select(Bill)
+def list_bills(
+    status: str | None = None,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    q = select(Bill).where(Bill.org_id == org_id)
     if status:
         q = q.where(Bill.status == status)
     bills = db.exec(q).all()
     out = []
     for b in bills:
-        lines = db.exec(select(BillLine).where(BillLine.bill_id == b.id)).all()
+        lines = db.exec(
+            select(BillLine).where(BillLine.bill_id == b.id, BillLine.org_id == org_id)
+        ).all()
         out.append(_to_resp(b, lines))
     return out
 
 
 @router.get("/{bill_id}", response_model=BillResponse)
-def get_bill(bill_id: int, db: Session = Depends(get_db)):
-    b = db.get(Bill, bill_id)
-    if not b:
-        raise HTTPException(status_code=404, detail="Bill not found")
-    lines = db.exec(select(BillLine).where(BillLine.bill_id == bill_id)).all()
+def get_bill(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    b = _load_bill_for_org(db, bill_id, org_id)
+    lines = db.exec(
+        select(BillLine).where(BillLine.bill_id == bill_id, BillLine.org_id == org_id)
+    ).all()
     return _to_resp(b, lines)
 
 
 @router.post("/", response_model=BillResponse, status_code=201)
-def create_bill(body: BillCreate, db: Session = Depends(get_db)):
+def create_bill(
+    body: BillCreate,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
     now = _now()
+    contact_id = body.contact_id
+    if contact_id is None and body.contact_name.strip():
+        contact_id = upsert_contact(
+            db, org_id=org_id, name=body.contact_name, contact_type="supplier",
+        ).id
     b = Bill(
-        number=body.number, contact_id=body.contact_id, contact_name=body.contact_name,
+        org_id=org_id,
+        number=body.number, contact_id=contact_id, contact_name=body.contact_name,
         reference=body.reference, issue_date=body.issue_date, due_date=body.due_date,
         currency=body.currency, notes=body.notes,
         status=DocumentStatus(body.status),
@@ -91,6 +142,7 @@ def create_bill(body: BillCreate, db: Session = Depends(get_db)):
     for ln in body.lines:
         line_total = round(ln.quantity * ln.unit_price, 2)
         l = BillLine(
+            org_id=org_id,
             bill_id=b.id, description=ln.description, quantity=ln.quantity,
             unit_price=ln.unit_price, tax_rate=ln.tax_rate, line_total=line_total,
             account_code=ln.account_code,
@@ -109,10 +161,13 @@ def create_bill(body: BillCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/{bill_id}", response_model=BillResponse)
-def update_bill(bill_id: int, body: BillUpdate, db: Session = Depends(get_db)):
-    b = db.get(Bill, bill_id)
-    if not b:
-        raise HTTPException(status_code=404, detail="Bill not found")
+def update_bill(
+    bill_id: int,
+    body: BillUpdate,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    b = _load_bill_for_org(db, bill_id, org_id)
     data = body.model_dump(exclude_unset=True)
     if "status" in data:
         data["status"] = DocumentStatus(data["status"])
@@ -122,16 +177,22 @@ def update_bill(bill_id: int, body: BillUpdate, db: Session = Depends(get_db)):
     db.add(b)
     db.commit()
     db.refresh(b)
-    lines = db.exec(select(BillLine).where(BillLine.bill_id == bill_id)).all()
+    lines = db.exec(
+        select(BillLine).where(BillLine.bill_id == bill_id, BillLine.org_id == org_id)
+    ).all()
     return _to_resp(b, lines)
 
 
 @router.delete("/{bill_id}", status_code=204)
-def delete_bill(bill_id: int, db: Session = Depends(get_db)):
-    b = db.get(Bill, bill_id)
-    if not b:
-        raise HTTPException(status_code=404, detail="Bill not found")
-    lines = db.exec(select(BillLine).where(BillLine.bill_id == bill_id)).all()
+def delete_bill(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    b = _load_bill_for_org(db, bill_id, org_id)
+    lines = db.exec(
+        select(BillLine).where(BillLine.bill_id == bill_id, BillLine.org_id == org_id)
+    ).all()
     for l in lines:
         db.delete(l)
     db.delete(b)
@@ -139,7 +200,11 @@ def delete_bill(bill_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/upload", response_model=BillResponse, status_code=201)
-async def upload_bill(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_bill(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
     """
     Accept a PDF/image of a supplier bill. The LLM extractor pulls out
     supplier, date, amount and currency, then a draft Bill is created
@@ -158,7 +223,7 @@ async def upload_bill(file: UploadFile = File(...), db: Session = Depends(get_db
     filename = file.filename or "upload.pdf"
     file_hash, storage_path = save_upload(contents, filename, mime)
 
-    result = await asyncio.to_thread(extract_invoice, contents, filename, mime, "purchase")
+    result = await _extract_with_retry(contents, filename, mime, "purchase")
     if result.error:
         raise HTTPException(
             status_code=422,
@@ -166,9 +231,13 @@ async def upload_bill(file: UploadFile = File(...), db: Session = Depends(get_db
         )
 
     now = _now()
+    supplier_name = (result.vendor or "Unknown supplier").strip()
+    contact = upsert_contact(db, org_id=org_id, name=supplier_name, contact_type="supplier")
     b = Bill(
+        org_id=org_id,
         number=result.invoice_id,
-        contact_name=(result.vendor or "Unknown supplier").strip(),
+        contact_id=contact.id,
+        contact_name=supplier_name,
         issue_date=result.date or now[:10],
         currency=(result.currency or "GBP").upper(),
         status=DocumentStatus.DRAFT,
@@ -188,6 +257,7 @@ async def upload_bill(file: UploadFile = File(...), db: Session = Depends(get_db
     db.refresh(b)
 
     line = BillLine(
+        org_id=org_id,
         bill_id=b.id,
         description=f"Extracted from {filename} — please verify",
         quantity=1.0,
