@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from contextlib import contextmanager
 from typing import Generator
 
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 
 from config.settings import settings
@@ -20,9 +21,32 @@ from config.settings import settings
 engine = create_engine(settings.DATABASE_URL, echo=False)
 
 
+def _run_migrations() -> None:
+    """Add columns that SQLModel.metadata.create_all won't add to existing tables."""
+    statements = [
+        # CompanyProfile: was a shared single row; now one row per org
+        "ALTER TABLE company_profile ADD COLUMN org_id INTEGER REFERENCES organization(id)",
+        "CREATE INDEX IF NOT EXISTS ix_company_profile_org_id ON company_profile(org_id)",
+        # UserProfile: was a shared single row; now one row per user
+        "ALTER TABLE user_profile ADD COLUMN user_id INTEGER REFERENCES \"user\"(id)",
+        "CREATE INDEX IF NOT EXISTS ix_user_profile_user_id ON user_profile(user_id)",
+        # StatementLine: bulk-match columns (1 bank line → N invoices/bills)
+        "ALTER TABLE statement_line ADD COLUMN matched_invoice_ids TEXT",
+        "ALTER TABLE statement_line ADD COLUMN matched_bill_ids TEXT",
+    ]
+    with engine.connect() as conn:
+        for stmt in statements:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass  # column/index already exists — safe to skip
+
+
 def init_db() -> None:
-    """Create all tables. Safe to call multiple times (idempotent)."""
+    """Create all tables then apply incremental column migrations."""
     SQLModel.metadata.create_all(engine)
+    _run_migrations()
 
 
 @contextmanager

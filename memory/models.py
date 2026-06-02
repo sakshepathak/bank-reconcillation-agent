@@ -135,11 +135,12 @@ class ManualLedgerEntry(SQLModel, table=True):
 
 
 class UserProfile(SQLModel, table=True):
-    """Single-row user profile. Created on first sidebar render if absent."""
+    """Per-user profile. One row per User — keyed by user_id."""
 
     __tablename__ = "user_profile"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     name: str = Field(default="User")
     role: str = Field(default="Accountant")
     email: Optional[str] = None
@@ -147,11 +148,12 @@ class UserProfile(SQLModel, table=True):
 
 
 class CompanyProfile(SQLModel, table=True):
-    """Single-row company profile. Managed via the Settings tab."""
+    """Per-org company profile. One row per Organization — keyed by org_id."""
 
     __tablename__ = "company_profile"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: Optional[int] = Field(default=None, foreign_key="organization.id", index=True)
     company_name: str = Field(default="")
     about: Optional[str] = None
     industry: Optional[str] = None
@@ -481,6 +483,10 @@ class StatementLine(SQLModel, table=True):
     matched_bill_id: Optional[int] = Field(default=None, foreign_key="bill.id")
     matched_journal_id: Optional[int] = Field(default=None, foreign_key="journal_entry.id")
     transfer_to_account_id: Optional[int] = Field(default=None, foreign_key="bank_account.id")
+    # Bulk-match: one bank line covers N invoices/bills from the same vendor.
+    # Stored as JSON: [{"id": 1, "amount": 520.0}, ...]
+    matched_invoice_ids: Optional[str] = Field(default=None)
+    matched_bill_ids: Optional[str] = Field(default=None)
 
     # Meta
     discussion: Optional[str] = None             # note from "Discuss" tab

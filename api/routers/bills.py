@@ -1,5 +1,6 @@
 """Bill CRUD with line items + status transitions (mirror of invoices)."""
 import asyncio
+import re
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
@@ -11,9 +12,23 @@ from api.schemas.models import (
 from api.deps import get_db, get_current_org_id
 from engine.contacts import upsert_contact
 from engine.file_store import save_upload
-from mcp_server.tools.invoice_extractor import extract_invoice
+from mcp_server.tools.invoice_extractor import extract_invoice, extract_multi_from_file
 
 _ALLOWED_MIMES = {"application/pdf", "image/png", "image/jpeg", "image/jpg", "image/webp"}
+
+
+def _parse_date(raw: str, fallback) -> str | None:
+    """ISO YYYY-MM-DD stored as-is. Other formats auto-detect dayfirst."""
+    import re as _re
+    raw = raw.strip()
+    if _re.match(r'^\d{4}-\d{2}-\d{2}$', raw):
+        return raw
+    try:
+        import pandas as _pd
+        dayfirst = not bool(_re.match(r'^\d{4}', raw))
+        return _pd.to_datetime(raw, dayfirst=dayfirst).strftime('%Y-%m-%d')
+    except Exception:
+        return fallback
 
 _TRANSIENT_ERROR_HINTS = (
     "rate", "429", "timeout", "unavailable", "503", "502", "504",
@@ -171,6 +186,19 @@ def update_bill(
     data = body.model_dump(exclude_unset=True)
     if "status" in data:
         data["status"] = DocumentStatus(data["status"])
+    if "total" in data:
+        new_total = float(data["total"])
+        data["subtotal"] = new_total
+        data["tax_total"] = 0.0
+        lines_to_update = db.exec(
+            select(BillLine).where(BillLine.bill_id == bill_id, BillLine.org_id == org_id)
+        ).all()
+        if len(lines_to_update) == 1:
+            lines_to_update[0].unit_price = new_total
+            lines_to_update[0].line_total = new_total
+            db.add(lines_to_update[0])
+    if "contact_name" in data and data["contact_name"]:
+        upsert_contact(db, org_id=org_id, name=data["contact_name"], contact_type="supplier")
     for k, v in data.items():
         setattr(b, k, v)
     b.updated_at = _now()
@@ -199,18 +227,166 @@ def delete_bill(
     db.commit()
 
 
-@router.post("/upload", response_model=BillResponse, status_code=201)
+@router.post("/upload-csv", response_model=list[BillResponse], status_code=201)
+async def upload_bills_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    """
+    Accept a CSV of bills and bulk-create them — no LLM needed.
+
+    Supported columns (case-insensitive):
+      number / bill_number      → bill number
+      supplier / contact_name / vendor / contact → supplier name
+      date / issue_date         → issue date (YYYY-MM-DD)
+      due_date                  → due date (optional)
+      amount / total            → total amount
+      currency                  → 3-letter ISO code (default GBP)
+      status                    → draft | awaiting_payment (default awaiting_payment)
+    """
+    import io
+    import pandas as pd
+
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty")
+
+    _log.info("upload-csv bills: received %d bytes, filename=%s", len(contents), file.filename)
+
+    raw = None
+    parse_err = None
+    for enc in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
+        try:
+            raw = pd.read_csv(io.BytesIO(contents), encoding=enc)
+            break
+        except Exception as e:
+            parse_err = e
+            continue
+    if raw is None:
+        _log.error("upload-csv bills: could not parse CSV — %s", parse_err)
+        raise HTTPException(status_code=422, detail=f"Could not parse CSV: {parse_err}")
+
+    raw.columns = [str(c).strip().lower() for c in raw.columns]
+    cols = set(raw.columns)
+
+    def _pick(candidates):
+        for c in candidates:
+            if c in cols:
+                return c
+        return None
+
+    num_col = _pick(["number", "bill_number", "bill_no", "bill #", "no"])
+    supplier_col = _pick(["supplier", "contact_name", "vendor", "contact", "supplier_name", "customer"])
+    date_col = _pick(["date", "issue_date", "bill_date"])
+    due_col = _pick(["due_date", "due date", "payment_due", "due"])
+    amount_col = _pick(["amount", "total", "bill_amount", "bill_total"])
+    currency_col = _pick(["currency", "ccy"])
+    status_col = _pick(["status"])
+
+    if not supplier_col:
+        raise HTTPException(status_code=422, detail=f"CSV missing supplier column. Got: {list(cols)}")
+    if not date_col:
+        raise HTTPException(status_code=422, detail=f"CSV missing date column. Got: {list(cols)}")
+    if not amount_col:
+        raise HTTPException(status_code=422, detail=f"CSV missing amount column. Got: {list(cols)}")
+
+    now = _now()
+    created: list[BillResponse] = []
+    skipped = 0
+
+    for idx, row in raw.iterrows():
+        try:
+            supplier_name = str(row[supplier_col]).strip()
+            if not supplier_name or supplier_name.lower() == "nan":
+                skipped += 1
+                continue
+
+            raw_date = str(row[date_col]).strip()
+            issue_date = _parse_date(raw_date, now[:10])
+
+            due_date = None
+            if due_col and str(row.get(due_col, "")).strip() not in ("", "nan"):
+                due_date = _parse_date(str(row[due_col]).strip(), None)
+
+            try:
+                amount = float(str(row[amount_col]).replace(",", "").replace("£", "").replace("$", "").replace("€", "").strip())
+            except (ValueError, TypeError):
+                skipped += 1
+                continue
+
+            currency = "GBP"
+            if currency_col and str(row.get(currency_col, "")).strip() not in ("", "nan"):
+                currency = str(row[currency_col]).strip().upper()
+
+            number = None
+            if num_col and str(row.get(num_col, "")).strip() not in ("", "nan"):
+                number = str(row[num_col]).strip()
+
+            status_val = "awaiting_payment"
+            if status_col and str(row.get(status_col, "")).strip().lower() not in ("", "nan"):
+                s = str(row[status_col]).strip().lower()
+                if s in DocumentStatus._value2member_map_:
+                    status_val = s
+
+            contact = upsert_contact(db, org_id=org_id, name=supplier_name, contact_type="supplier")
+            b = Bill(
+                org_id=org_id,
+                number=number,
+                contact_id=contact.id,
+                contact_name=supplier_name,
+                issue_date=issue_date,
+                due_date=due_date,
+                currency=currency,
+                status=DocumentStatus(status_val),
+                subtotal=amount,
+                tax_total=0.0,
+                total=amount,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(b)
+            db.commit()
+            db.refresh(b)
+
+            line = BillLine(
+                org_id=org_id,
+                bill_id=b.id,
+                description="Imported from CSV",
+                quantity=1.0,
+                unit_price=amount,
+                tax_rate=0.0,
+                line_total=amount,
+                account_code=None,
+            )
+            db.add(line)
+            db.commit()
+            db.refresh(line)
+            created.append(_to_resp(b, [line]))
+        except Exception as e:  # noqa: BLE001
+            _log.error("upload-csv bills: error on row %s: %s", idx, e, exc_info=True)
+            skipped += 1
+            continue
+
+    _log.info("upload-csv bills: created=%d skipped=%d", len(created), skipped)
+    if not created:
+        raise HTTPException(status_code=422, detail=f"No valid rows found in CSV. Skipped {skipped} rows.")
+    return created
+
+
+@router.post("/upload", response_model=list[BillResponse], status_code=201)
 async def upload_bill(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
 ):
     """
-    Accept a PDF/image of a supplier bill. The LLM extractor pulls out
-    supplier, date, amount and currency, then a draft Bill is created
-    with a single line item containing the extracted total. The PDF is
-    stored on disk and referenced via `source_file_path` so the user can
-    view it back later.
+    Accept a PDF/image of one or more supplier bills. The LLM extracts every
+    bill it finds in the file, creating one Bill record per document.
+    A single-bill PDF returns a list of one; a multi-bill PDF returns many.
     """
     contents = await file.read()
     mime = (file.content_type or "").lower()
@@ -223,51 +399,66 @@ async def upload_bill(
     filename = file.filename or "upload.pdf"
     file_hash, storage_path = save_upload(contents, filename, mime)
 
-    result = await _extract_with_retry(contents, filename, mime, "purchase")
-    if result.error:
+    results = await asyncio.to_thread(extract_multi_from_file, contents, filename, mime, "purchase")
+
+    if all(r.error for r in results):
+        first_err = results[0].error or ""
+        is_transient = any(h in first_err.lower() for h in _TRANSIENT_ERROR_HINTS)
+        for backoff in ([2.0, 5.0] if is_transient else []):
+            await asyncio.sleep(backoff)
+            results = await asyncio.to_thread(extract_multi_from_file, contents, filename, mime, "purchase")
+            if not all(r.error for r in results):
+                break
+
+    ok_results = [r for r in results if r.ok]
+    if not ok_results:
+        errors = "; ".join(r.error for r in results if r.error)
         raise HTTPException(
             status_code=422,
-            detail=f"Could not extract data from {filename}: {result.error}",
+            detail=f"Could not extract any bills from {filename}: {errors}",
         )
 
     now = _now()
-    supplier_name = (result.vendor or "Unknown supplier").strip()
-    contact = upsert_contact(db, org_id=org_id, name=supplier_name, contact_type="supplier")
-    b = Bill(
-        org_id=org_id,
-        number=result.invoice_id,
-        contact_id=contact.id,
-        contact_name=supplier_name,
-        issue_date=result.date or now[:10],
-        currency=(result.currency or "GBP").upper(),
-        status=DocumentStatus.DRAFT,
-        notes=(
-            f"Imported from {filename} "
-            f"(confidence {result.confidence:.0%})"
-        ),
-        source_file_path=storage_path,
-        subtotal=result.amount,
-        tax_total=0.0,
-        total=result.amount,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(b)
-    db.commit()
-    db.refresh(b)
+    created: list[BillResponse] = []
+    for i, result in enumerate(ok_results):
+        supplier_name = (result.vendor or "Unknown supplier").strip()
+        contact = upsert_contact(db, org_id=org_id, name=supplier_name, contact_type="supplier")
+        b = Bill(
+            org_id=org_id,
+            number=result.invoice_id,
+            contact_id=contact.id,
+            contact_name=supplier_name,
+            issue_date=result.date or now[:10],
+            currency=(result.currency or "GBP").upper(),
+            status=DocumentStatus.DRAFT,
+            notes=(
+                f"Imported from {filename} "
+                f"(confidence {result.confidence:.0%})"
+            ),
+            source_file_path=storage_path,
+            subtotal=result.amount,
+            tax_total=0.0,
+            total=result.amount,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(b)
+        db.commit()
+        db.refresh(b)
 
-    line = BillLine(
-        org_id=org_id,
-        bill_id=b.id,
-        description=f"Extracted from {filename} — please verify",
-        quantity=1.0,
-        unit_price=result.amount,
-        tax_rate=0.0,
-        line_total=result.amount,
-        account_code=None,
-    )
-    db.add(line)
-    db.commit()
-    db.refresh(line)
+        line = BillLine(
+            org_id=org_id,
+            bill_id=b.id,
+            description=f"Extracted from {filename} — please verify",
+            quantity=1.0,
+            unit_price=result.amount,
+            tax_rate=0.0,
+            line_total=result.amount,
+            account_code=None,
+        )
+        db.add(line)
+        db.commit()
+        db.refresh(line)
+        created.append(_to_resp(b, [line]))
 
-    return _to_resp(b, [line])
+    return created

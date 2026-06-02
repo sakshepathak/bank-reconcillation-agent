@@ -121,6 +121,37 @@ def _clean_money(series: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce").fillna(0).astype(float)
 
 
+def _needs_dayfirst(series: pd.Series) -> bool:
+    """
+    Return False (ISO mode) when dates start with a 4-digit year.
+    Return True only for DD/MM/YYYY or DD-MM-YYYY (UK bank export format).
+    ISO dates (YYYY-MM-DD) must never use dayfirst — it swaps month and day.
+    """
+    import re
+    sample = series.dropna().astype(str)
+    if sample.empty:
+        return True
+    first = sample.iloc[0].strip()
+    # Any date starting with 4-digit year is ISO — never dayfirst
+    return not bool(re.match(r'^\d{4}[-/]', first))
+
+
+def _to_iso(val: str) -> str | None:
+    """
+    Convert any date string to YYYY-MM-DD.
+    ISO inputs stored as-is. All other formats parsed with dayfirst detection.
+    """
+    import re
+    val = str(val).strip()
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', val):
+        return val  # already ISO — never touches pandas, zero ambiguity
+    try:
+        df = not bool(re.match(r'^\d{4}', val))
+        return pd.to_datetime(val, dayfirst=df).strftime('%Y-%m-%d')
+    except Exception:
+        return None
+
+
 def _parse_csv(file_bytes: bytes) -> pd.DataFrame:
     """
     Parse a bank statement CSV into the canonical DataFrame.
@@ -148,7 +179,7 @@ def _parse_csv(file_bytes: bytes) -> pd.DataFrame:
     date_col = _pick_column(cols, _DATE_COLUMNS)
     if not date_col:
         raise ValueError(f"No date column found. Got: {cols}")
-    dates = pd.to_datetime(raw[date_col], dayfirst=True, errors="coerce")
+    dates = pd.to_datetime(raw[date_col], dayfirst=_needs_dayfirst(raw[date_col]), errors="coerce")
     iso_dates = dates.dt.strftime("%Y-%m-%d")
 
     # ── Amount ───────────────────────────────────────────────────────────────
@@ -226,34 +257,74 @@ def _call_llm_text(text: str) -> pd.DataFrame:
     llm = get_llm()
     # Truncate to be safe on context limits (Gemini 2.5 handles 1M, but bills can be huge)
     prompt = _PROMPT + "\n\nBank statement text:\n" + text[:60_000]
-    result = llm.complete_text(prompt, schema=BankStatementExtraction, max_tokens=8000)
+    # json_mode (not schema=): Gemini's schema-constrained decoding truncates
+    # variable-length lists mid-string, producing invalid JSON. json_mode just
+    # enforces valid JSON and we validate manually in _to_dataframe.
+    result = llm.complete_text(prompt, json_mode=True, max_tokens=8000)
     return _to_dataframe(result.text)
 
 
 def _call_llm_pdf(pdf_bytes: bytes) -> pd.DataFrame:
     """Native PDF call — Gemini handles multi-page bank statements in one shot."""
     llm = get_llm()
-    result = llm.complete_pdf(_PROMPT, pdf_bytes, schema=BankStatementExtraction, max_tokens=8000)
+    result = llm.complete_pdf(_PROMPT, pdf_bytes, json_mode=True, max_tokens=8000)
     return _to_dataframe(result.text)
 
 
 # ─── Schema validation → DataFrame ───────────────────────────────────────────
 
-def _to_dataframe(raw_json_text: str) -> pd.DataFrame:
-    try:
-        parsed = BankStatementExtraction.model_validate_json(raw_json_text)
-    except Exception:  # noqa: BLE001
-        # Last-ditch: try to recover JSON object from any wrapping text
-        import json
-        try:
-            obj = json.loads(raw_json_text)
-        except json.JSONDecodeError:
-            start, end = raw_json_text.find("{"), raw_json_text.rfind("}")
-            if start < 0 or end <= start:
-                raise ValueError("LLM returned no parseable JSON for bank statement")
-            obj = json.loads(raw_json_text[start:end + 1])
-        parsed = BankStatementExtraction.model_validate(obj)
+def _loads_lenient(text: str) -> dict:
+    """
+    Parse a JSON object out of an LLM response, tolerating the three ways an LLM
+    can wrap or break it: markdown fences, surrounding prose, and a transactions
+    array that got truncated mid-way (so the whole object won't parse, but the
+    complete transaction rows still can be salvaged).
+    """
+    import json
+    import re
 
+    s = (text or "").strip()
+
+    # 1. Strip markdown code fences if present (```json … ```).
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
+        s = re.sub(r"\n?```$", "", s).strip()
+
+    # 2. Straight parse.
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Narrow to the outermost {...} and try again.
+    start, end = s.find("{"), s.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            return json.loads(s[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    # 4. Salvage complete transaction objects from a truncated array.
+    objs = []
+    for m in re.finditer(r"\{[^{}]*\}", s):
+        try:
+            o = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            continue
+        if "date" in o and "amount" in o:
+            objs.append(o)
+    if objs:
+        log.warning("Bank statement JSON was malformed/truncated — salvaged %d rows", len(objs))
+        return {"transactions": objs}
+
+    raise ValueError(
+        f"LLM returned unparseable JSON for the bank statement. "
+        f"Response started with: {s[:150]!r}"
+    )
+
+
+def _to_dataframe(raw_json_text: str) -> pd.DataFrame:
+    parsed = BankStatementExtraction.model_validate(_loads_lenient(raw_json_text))
     rows = [t.model_dump() for t in parsed.transactions]
     if not rows:
         raise ValueError("No transactions extracted from bank statement.")

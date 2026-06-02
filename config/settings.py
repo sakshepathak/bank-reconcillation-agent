@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     # Minimum fuzzy string similarity score (0-100)
     FUZZY_SCORE_THRESHOLD: int = 70
 
+    # ── Auth ─────────────────────────────────────────────────────────────────
+    # True = anyone can register a new account. Default on so you can always
+    # add users/businesses. Set to false in .env to lock down a production box.
+    ALLOW_REGISTRATION: bool = True
+
     # ── Persistence (SQLite for local dev; swap URL for Postgres in prod) ─────
     DATABASE_URL: str = "sqlite:///./bank_recon.db"
 
