@@ -27,6 +27,7 @@ export default function OrgSwitcher() {
     setBusyId(orgId)
     try {
       await switchOrg(orgId)
+      navigate('/dashboard')
     } finally {
       setBusyId(null)
     }

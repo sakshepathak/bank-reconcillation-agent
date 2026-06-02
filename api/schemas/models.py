@@ -249,6 +249,8 @@ class InvoiceUpdate(BaseModel):
     notes: Optional[str] = None
     status: Optional[str] = None
     sent: Optional[bool] = None
+    currency: Optional[str] = None
+    total: Optional[float] = None
 
 
 class InvoiceResponse(BaseModel):
@@ -316,6 +318,8 @@ class BillUpdate(BaseModel):
     due_date: Optional[str] = None
     notes: Optional[str] = None
     status: Optional[str] = None
+    currency: Optional[str] = None
+    total: Optional[float] = None
 
 
 class BillResponse(BaseModel):
@@ -365,6 +369,25 @@ class JournalEntryResponse(BaseModel):
     created_at: str
 
 
+# ── Bulk Match ───────────────────────────────────────────────────────────────
+
+class BulkMatchOpenDoc(BaseModel):
+    id: int
+    label: str
+    amount: float
+    date: str
+    contact_name: str
+
+
+class BulkMatchSuggestionsResponse(BaseModel):
+    """Returned by GET /{line_id}/bulk-suggestions."""
+    vendor: Optional[str] = None           # top vendor identified from bank description
+    vendor_score: float = 0.0              # matcher confidence 0–1
+    doc_type: str                          # "invoice" | "bill"
+    open_docs: list[BulkMatchOpenDoc]      # all open docs for that vendor
+    suggested_groups: list[list[int]]      # [[id1,id2,id3], ...] exact-sum subsets
+
+
 # ── Statement Lines ──────────────────────────────────────────────────────────
 
 class StatementLineResponse(BaseModel):
@@ -381,6 +404,8 @@ class StatementLineResponse(BaseModel):
     matched_bill_id: Optional[int]
     matched_journal_id: Optional[int]
     transfer_to_account_id: Optional[int]
+    matched_invoice_ids: Optional[list[dict]] = None  # bulk: [{"id":1,"amount":520.0},...]
+    matched_bill_ids: Optional[list[dict]] = None
     discussion: Optional[str]
     suggested_score: Optional[float]
     imported_at: str
@@ -410,6 +435,14 @@ class MatchInvoiceRequest(BaseModel):
 
 class MatchBillRequest(BaseModel):
     bill_id: int
+
+
+class MatchBulkInvoicesRequest(BaseModel):
+    invoice_ids: list[int]
+
+
+class MatchBulkBillsRequest(BaseModel):
+    bill_ids: list[int]
 
 
 class CreateEntryRequest(BaseModel):

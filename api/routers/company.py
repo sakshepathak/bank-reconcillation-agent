@@ -7,8 +7,7 @@ from api.schemas.models import (
     CompanyResponse, CompanyUpdate,
     ServiceCreate, ServiceResponse,
 )
-from api.deps import get_db, get_current_org_id, require_user
-from memory.models import User
+from api.deps import get_db, get_current_org_id
 
 router = APIRouter(tags=["company"])
 
@@ -29,11 +28,9 @@ def _empty_company() -> CompanyResponse:
 @router.get("/company", response_model=CompanyResponse)
 def get_company(
     db: Session = Depends(get_db),
-    _user: User = Depends(require_user),
+    org_id: int = Depends(get_current_org_id),
 ):
-    # Legacy single-row table — being migrated to Organization in a later step.
-    # Authentication required here is enough; per-org split happens with the migration.
-    c = db.exec(select(CompanyProfile)).first()
+    c = db.exec(select(CompanyProfile).where(CompanyProfile.org_id == org_id)).first()
     if not c:
         return _empty_company()
     return CompanyResponse(**c.model_dump())
@@ -43,15 +40,15 @@ def get_company(
 def upsert_company(
     body: CompanyUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(require_user),
+    org_id: int = Depends(get_current_org_id),
 ):
-    c = db.exec(select(CompanyProfile)).first()
+    c = db.exec(select(CompanyProfile).where(CompanyProfile.org_id == org_id)).first()
     if c:
         for k, v in body.model_dump(exclude_unset=True).items():
             setattr(c, k, v)
         c.updated_at = _now()
     else:
-        c = CompanyProfile(**body.model_dump(exclude_unset=True), updated_at=_now())
+        c = CompanyProfile(**body.model_dump(exclude_unset=True), org_id=org_id, updated_at=_now())
     db.add(c)
     db.commit()
     db.refresh(c)

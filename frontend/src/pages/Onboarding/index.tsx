@@ -87,8 +87,24 @@ const DEFAULTS: FormValues = {
 
 export default function Onboarding() {
   const navigate = useNavigate()
-  const { user, createOrg } = useAuth()
+  const { user, createOrg, switchOrg } = useAuth()
   const [serverError, setServerError] = useState<string | null>(null)
+  const [switchingId, setSwitchingId] = useState<number | null>(null)
+
+  // Pick one of the user's existing orgs (the "no org selected" path after a
+  // delete, or simply choosing a different set of books). Switching sets the
+  // session's current_org_id and drops us into the app.
+  async function handleSelectExisting(orgId: number) {
+    setSwitchingId(orgId)
+    setServerError(null)
+    try {
+      await switchOrg(orgId)
+      navigate('/dashboard', { replace: true })
+    } catch (err) {
+      setServerError(err instanceof ApiError ? err.message : 'Could not switch organisation')
+      setSwitchingId(null)
+    }
+  }
 
   const {
     register,
@@ -133,6 +149,7 @@ export default function Onboarding() {
   }
 
   const hasExistingOrgs = (user?.orgs.length ?? 0) > 0
+  const noOrgSelected = (user?.current_org_id ?? null) === null
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-indigo-50 px-4 py-10">
@@ -143,9 +160,13 @@ export default function Onboarding() {
               <Building2 className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-foreground">Add your business</h1>
+              <h1 className="text-lg font-bold text-foreground">
+                {hasExistingOrgs && noOrgSelected ? 'Select an organisation' : 'Add your business'}
+              </h1>
               <p className="text-xs text-muted-foreground">
-                {hasExistingOrgs
+                {hasExistingOrgs && noOrgSelected
+                  ? 'No organisation is selected. Pick one to continue, or create a new one.'
+                  : hasExistingOrgs
                   ? "You'll be switched to this organisation once it's created."
                   : 'Tell us about your business to get started. You can change everything later in Settings.'}
               </p>
@@ -153,7 +174,39 @@ export default function Onboarding() {
           </div>
         </CardHeader>
 
-        <CardContent className="pt-5">
+        <CardContent className="pt-5 space-y-6">
+          {/* Existing-org picker — shown whenever the user already has orgs */}
+          {hasExistingOrgs && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Your organisations
+              </p>
+              <div className="space-y-1.5">
+                {user!.orgs.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    onClick={() => handleSelectExisting(o.id)}
+                    disabled={switchingId !== null}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-slate-200 bg-white hover:bg-indigo-50/60 hover:border-indigo-300 transition-colors text-left disabled:opacity-60"
+                  >
+                    <div className="w-8 h-8 rounded-md bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                      <Building2 className="w-4 h-4 text-indigo-600" />
+                    </div>
+                    <span className="flex-1 text-sm font-medium truncate">{o.name}</span>
+                    <span className="text-xs text-muted-foreground capitalize">{o.role}</span>
+                    {switchingId === o.id && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-3 pt-2">
+                <div className="flex-1 h-px bg-slate-200" />
+                <span className="text-xs text-muted-foreground">or add a new business</span>
+                <div className="flex-1 h-px bg-slate-200" />
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
             {/* Business name */}
             <div className="space-y-1.5">
@@ -279,7 +332,7 @@ export default function Onboarding() {
             )}
 
             <div className="flex items-center gap-3 pt-1">
-              {hasExistingOrgs && (
+              {hasExistingOrgs && !noOrgSelected && (
                 <Button
                   type="button"
                   variant="outline"

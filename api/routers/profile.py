@@ -20,11 +20,9 @@ def _default() -> UserProfileResponse:
 @router.get("/", response_model=UserProfileResponse)
 def get_profile(
     db: Session = Depends(get_db),
-    _user: User = Depends(require_user),
+    user: User = Depends(require_user),
 ):
-    # Legacy single-row table. Being superseded by the real `user` table from auth;
-    # kept here for the Settings page until a follow-up step migrates it.
-    p = db.exec(select(UserProfile)).first()
+    p = db.exec(select(UserProfile).where(UserProfile.user_id == user.id)).first()
     if not p:
         return _default()
     return UserProfileResponse(**p.model_dump())
@@ -34,15 +32,15 @@ def get_profile(
 def upsert_profile(
     body: UserProfileUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(require_user),
+    user: User = Depends(require_user),
 ):
-    p = db.exec(select(UserProfile)).first()
+    p = db.exec(select(UserProfile).where(UserProfile.user_id == user.id)).first()
     if p:
         for k, v in body.model_dump(exclude_unset=True).items():
             setattr(p, k, v)
         p.updated_at = _now()
     else:
-        p = UserProfile(**body.model_dump(exclude_unset=True), updated_at=_now())
+        p = UserProfile(**body.model_dump(exclude_unset=True), user_id=user.id, updated_at=_now())
     db.add(p)
     db.commit()
     db.refresh(p)

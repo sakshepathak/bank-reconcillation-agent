@@ -2,6 +2,8 @@
 
 A multi-tenant bank reconciliation platform. Each organisation gets fully isolated books: invoices, bills, contacts, bank accounts, and statement lines. A deterministic matching cascade pairs bank transactions against open invoices and bills, with a human-review queue for anything the engine isn't sure about.
 
+> 📖 **Documentation:** [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) — module guide (how each part works) · [`docs/FEATURES.md`](docs/FEATURES.md) — full feature list · [`docs/DEMO_CHEATSHEET.md`](docs/DEMO_CHEATSHEET.md) — reconciliation demo runbook.
+
 ---
 
 ## Table of Contents
@@ -16,7 +18,8 @@ A multi-tenant bank reconciliation platform. Each organisation gets fully isolat
 8. [Database and Migrations](#database-and-migrations)
 9. [Matching Engine](#matching-engine)
 10. [Multi-Tenancy and Auth](#multi-tenancy-and-auth)
-11. [Running Tests](#running-tests)
+11. [Future Scope and Next Steps](#future-scope-and-next-steps)
+12. [Running Tests](#running-tests)
 
 ---
 
@@ -49,7 +52,9 @@ Every piece of data is scoped to an organisation. There is no way for one tenant
 | Forms | react-hook-form + zod |
 | UI components | shadcn/ui, Tailwind CSS, Lucide icons |
 | PDF extraction | Google Gemini Vision (with OpenRouter fallback) |
-| Fuzzy matching | RapidFuzz |
+| Fuzzy matching | RapidFuzz (Jaro-Winkler + token/partial ratios) |
+| Semantic matching | fastembed (BGE-small-en-v1.5, local) — vendor matching + knowledge base |
+| Vector store | Qdrant (knowledge base retrieval) |
 | Subset-sum solver | PuLP (Mixed-Integer Programming) |
 | Testing | pytest |
 
@@ -66,7 +71,7 @@ Bank_reconcillation_model/
 │   ├── deps.py                 # FastAPI dependencies: require_user, get_current_org_id
 │   └── routers/
 │       ├── auth.py             # /auth/register, /login, /logout, /me, /current-org
-│       ├── orgs.py             # /orgs/ — create, list, get/patch current
+│       ├── orgs.py             # /orgs/ — create, list, get/patch current, export, delete (full wipe)
 │       ├── bank_accounts.py    # /bank-accounts/
 │       ├── invoices.py         # /invoices/ + PDF upload extraction
 │       ├── bills.py            # /bills/ + PDF upload extraction
@@ -83,7 +88,11 @@ Bank_reconcillation_model/
 ├── engine/
 │   ├── bank_statement_parser.py  # CSV/PDF → canonical DataFrame
 │   ├── contacts.py               # upsert_contact() — normalised dedup within org
+│   ├── vendor_matching/          # 4-tier matcher: normalize · similarity · embedder · explain
 │   └── llm/                      # Gemini + OpenRouter extraction clients
+│
+├── knowledge_base/             # Qdrant hybrid retrieval (RAG) — ingest + retriever
+├── mcp_server/tools/           # matching.py (batch cascade), split_solver.py (PuLP), …
 │
 ├── memory/
 │   ├── models.py                 # All SQLModel ORM models
@@ -116,7 +125,7 @@ Bank_reconcillation_model/
 │   │       ├── Reconciliation/   # Run reconciliation
 │   │       ├── ReviewQueue/      # Human approval queue
 │   │       ├── AuditTrail/       # Immutable match record log
-│   │       └── Settings/         # Organisation settings
+│   │       └── Settings/         # Profile · Organisation (edit + danger zone) · Services
 │   └── vite.config.ts
 │
 ├── tests/
@@ -130,7 +139,10 @@ Bank_reconcillation_model/
 │   └── test_matching.py          # Matching cascade unit tests
 │
 ├── scripts/
-│   └── create_first_user.py      # Bootstrap first user when ALLOW_REGISTRATION=false
+│   ├── create_first_user.py      # Bootstrap first user when ALLOW_REGISTRATION=false
+│   ├── migrate.py                # Run tracked numbered migrations
+│   └── explain_match.py          # Terminal step-by-step trace of the matcher
+├── docs/                         # WALKTHROUGH (module guide), FEATURES, DEMO_CHEATSHEET
 ├── sample_data/                  # Sample CSVs for manual testing
 ├── requirements.txt
 └── .env.example
@@ -256,7 +268,21 @@ Open `http://localhost:5173` (or `5174` if 5173 is taken).
 - Session tracks `current_org_id` — all reads and writes are scoped to this org
 - **OrgSwitcher** in the sidebar lets you jump between orgs instantly
 - **"+ Add new organisation"** walks through the onboarding form and switches to the new org automatically
-- If a user has no organisation, they are force-redirected to `/onboarding` before accessing any other page
+- If a user has no organisation (or just deleted the one they were in), they land on `/onboarding`, which doubles as an **org picker** — select an existing org or create a new one
+- **Delete an organisation** (Settings → Organisation → Danger Zone): permanently wipes every row across all 14 org-scoped tables plus its knowledge-base vectors, then resets the session to "no org selected". A typed-name confirmation is required, and a one-click **JSON backup export** is offered first. Admin-only.
+
+### Settings
+
+- **Profile** — the logged-in user's name, role, email (per user, not per org)
+- **Organisation** — one editable form covering both org identity (name, country, currency, VAT/tax) and the rich company profile (about/what the business does, website, phone, address, registration number). Saving writes to `PATCH /orgs/current` and `PUT /company` together so the two records stay in sync. The "About" field is the seed for the planned assistant knowledge base.
+- **Services & Products** — per-org catalogue used for VAT categorisation; fully org-scoped
+
+### CSV Import (invoices & bills)
+
+- Upload a CSV of invoices or bills (in addition to PDF/LLM extraction)
+- Column names are matched case-insensitively (`number`/`invoice_number`, `customer`/`contact_name`, `date`/`issue_date`, `amount`/`total`, …)
+- **ISO dates (`YYYY-MM-DD`) are stored verbatim** — a regex short-circuit in `_parse_date` avoids pandas' `dayfirst` month/day ambiguity entirely; only non-ISO formats fall through to pandas
+- **De-duplication by invoice/bill number within the org**: re-importing the same file updates the existing record in place instead of creating duplicates
 
 ### Bank Accounts and Statement Import
 
@@ -292,6 +318,23 @@ A 6-level matching cascade pairs statement lines against open invoices and bills
 | 6a | Relaxed fuzzy (speculative) | No |
 | 6b | LLM verifier (last resort, small residual sets) | No |
 
+### Reconcile Actions
+
+Each statement line can be resolved four ways (in `api/routers/statement_lines.py`):
+- **Match** — link to an invoice or bill; updates the document's paid amount and the bank balance
+- **Create** — spawn a journal/ledger entry for lines with no document (e.g. a bank fee)
+- **Transfer** — mark as a transfer between two of your own bank accounts (moves both balances)
+- **Discuss** — attach a note and leave the line pending
+- **Bulk match** — one bank line against multiple invoices/bills, with a live "amount needed" progress bar
+
+### Match Explainability
+
+Every match score can be opened up step by step — useful for trust, audits, and demos:
+- **`GET /statement-lines/{id}/explain`** returns the full trace (normalisation → alias → lexical sub-scores → embedding cosine → ensemble → amount/date → verdict)
+- **"How was this matched?"** panel in the reconciliation UI renders that trace inline
+- **`scripts/explain_match.py`** prints the same trace in the terminal for any real entry (`--line <id>`) or built-in examples
+- All three share one function (`engine/vendor_matching/explain.py`), so the numbers always match what the app acted on
+
 ### Review Queue
 
 - All non-exact matches wait for human approval
@@ -318,16 +361,26 @@ All endpoints are under `/api/v1/`. Every endpoint except `/auth/*` requires a v
 | `PUT /api/v1/auth/current-org` | Switch active org |
 | `GET/POST /api/v1/orgs/` | List / create organisations |
 | `GET/PATCH /api/v1/orgs/current` | Get or update current org settings |
+| `GET /api/v1/orgs/{id}/export` | Full JSON backup of an org's data (admin-only) |
+| `DELETE /api/v1/orgs/{id}` | Permanently delete an org and all its data (admin-only) |
+| `GET/PUT /api/v1/company` | Get / upsert the rich company profile for the current org |
+| `GET/POST /api/v1/services` | Per-org services & products catalogue |
 | `GET/POST /api/v1/bank-accounts/` | Bank accounts |
 | `GET/POST /api/v1/invoices/` | Invoices |
 | `POST /api/v1/invoices/upload` | Extract invoice from PDF |
+| `POST /api/v1/invoices/upload-csv` | Bulk import invoices from CSV (dedupes by number) |
 | `GET/POST /api/v1/bills/` | Bills |
 | `POST /api/v1/bills/upload` | Extract bill from PDF |
+| `POST /api/v1/bills/upload-csv` | Bulk import bills from CSV (dedupes by number) |
 | `GET/POST /api/v1/contacts/` | Contacts |
 | `GET /api/v1/contacts/{id}/detail` | Contact + linked invoices/bills/aliases |
 | `GET/POST /api/v1/aliases/` | Vendor aliases |
 | `POST /api/v1/statement-lines/import` | Import statement lines |
 | `GET /api/v1/statement-lines/` | List statement lines |
+| `GET /api/v1/statement-lines/{id}/suggestions` | Ranked match candidates with confidence scores |
+| `GET /api/v1/statement-lines/{id}/explain` | Step-by-step trace of how a candidate is scored |
+| `POST /api/v1/statement-lines/{id}/match-invoice` · `match-bill` | Reconcile a line to an invoice / bill |
+| `POST /api/v1/statement-lines/{id}/create-entry` · `transfer` · `discuss` | Create entry / mark transfer / add note |
 | `GET/POST /api/v1/runs/` | Reconciliation runs |
 | `POST /api/v1/matches/{id}/approve` | Approve a match |
 | `POST /api/v1/matches/{id}/reject` | Reject a match |
@@ -342,9 +395,12 @@ All endpoints are under `/api/v1/`. Every endpoint except `/auth/*` requires a v
 
 SQLite for development. Set `DATABASE_URL` in `.env` to a PostgreSQL connection string for production — the SQLModel ORM is compatible with both.
 
-Migrations run automatically on backend startup. Each migration is idempotent — safe to run multiple times.
+There are **two** migration mechanisms, by design:
 
-| Migration | What it does |
+1. **Lightweight column-adds — run on every startup.** `init_db()` (`memory/db.py`) runs `SQLModel.metadata.create_all` plus a list of `ALTER TABLE … ADD COLUMN` statements, each wrapped in try/except. These are idempotent: on an already-migrated database each statement no-ops. This keeps the schema in sync with the code with zero manual steps.
+2. **Tracked numbered migrations — run deliberately.** The numbered runner (`memory/migrations/_runner.py`, invoked via `python scripts/migrate.py`) records applied migrations in a `migration_history` table, skips ones already applied, and wraps each in a transaction. Used for the larger structural changes.
+
+| Numbered migration | What it does |
 |---|---|
 | `_001_add_org_id.py` | Adds `org_id` to all 13 business tables, backfills to org 1, adds indices |
 | `_002_vendor_alias_contact_fk.py` | Adds `contact_id` FK to `vendor_alias`, backfills by matching `canonical_name` to `Contact.full_name` within org |
@@ -353,16 +409,17 @@ Migrations run automatically on backend startup. Each migration is idempotent �
 
 ## Matching Engine
 
-The reconciliation cascade lives in `engine/` and `api/routers/runs.py`.
+The batch cascade lives in `mcp_server/tools/matching.py`; the interactive per-line suggestions the UI uses are in `api/routers/statement_lines.py`; the vendor entity-resolution layer is in `engine/vendor_matching/`. (`api/routers/runs.py` only serves run history.)
 
 **Key design principle:** The LLM is not the matching engine. All amount comparisons, date windows, fuzzy scores, and subset sums are deterministic Python. The LLM only runs as a last-resort pass (Level 6b) on small residual unmatched sets.
 
-**Vendor normalisation** (used in Level 3 and by `upsert_contact`):
-- Strips company suffixes: Ltd, Limited, Inc, Corp, Co, plc, llc, llp
-- Strips punctuation and collapses whitespace
-- Lowercases everything
+**Vendor matching is layered** (`engine/vendor_matching/`):
+1. **Normalise** — strip processor prefixes, bank noise, txn IDs, and company suffixes (Ltd/Inc/LLC…); uppercase and collapse whitespace
+2. **Alias** — exact O(1) hit from the learned `VendorAlias` table
+3. **Lexical** — weighted blend of Jaro-Winkler + token-set/sort + partial ratios (RapidFuzz)
+4. **Embedding** — local BGE-small vector cosine, used only when lexical isn't decisive, to catch meaning that spelling misses (e.g. `DAILYBEAN` ↔ `The Daily Bean`)
 
-The same algorithm is used for both matching and contact deduplication, so the contact identity the matcher resolves in Level 3 is the same identity stored in the database.
+The final score is an "ensemble max" — any strong signal wins. The same normalisation is used for contact deduplication (`upsert_contact`), so the identity the matcher resolves is the identity stored in the database. The full scoring is inspectable via the [Match Explainability](#features) tooling.
 
 ---
 
@@ -373,6 +430,24 @@ Every business-data table has an `org_id` column. Every router endpoint extracts
 Cross-tenant IDOR is prevented by `_load_X_for_org()` helpers in each router — these return 404 if `row.org_id != session_org_id`, even if the caller knows the row ID.
 
 The frontend mirrors this with a cache-reset strategy: on every org-context change (login, logout, switch, create org), `removeQueries()` drops all cached data except `/auth/me`. Components re-mount into a clean loading state — there is no window where one org's data is visible under another org's view.
+
+---
+
+## Future Scope and Next Steps
+
+### Near-term
+- **Org-scope the knowledge base.** The retrieval pipeline (`knowledge_base/`) is currently global. Scope every query by `org_id` before any assistant ships, so one organisation can never retrieve another's data. *(Security-critical prerequisite for the chatbot.)*
+- **Schema hardening.** Add a `_003_org_id_not_null` migration to enforce `NOT NULL` on `org_id`, and fold the inline column-adds in `memory/db.py` into the tracked numbered-migration runner so nothing schema-related re-runs on every boot.
+- **Consolidate `Organization` and `CompanyProfile`.** They overlap (industry, VAT, tax) and are currently kept in sync by a dual write from Settings; merge into one model to remove the drift risk.
+
+### Mid-term
+- **Per-company assistant (chatbot).** An agent over each organisation's data that mixes semantic search (RAG, for descriptions and policies) with exact database queries (for figures), plus a "teach a fact through chat" write-back. Built on the existing local Qdrant + fastembed stack — no new external service.
+- **Profile → knowledge base sync.** Feed the Settings "about the company" description and business data into the org-scoped knowledge base automatically, so the assistant has context.
+
+### Longer-term
+- **In-house extraction module.** Continue hardening the self-contained document-extraction pipeline (now decoupled from any external service).
+- **Production database.** Move from SQLite to PostgreSQL (`DATABASE_URL` already supports it) for concurrent multi-user use.
+- **Reconciliation at scale.** A batch "reconcile all" endpoint plus performance tuning for large statements.
 
 ---
 

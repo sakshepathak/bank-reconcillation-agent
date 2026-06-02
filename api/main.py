@@ -55,6 +55,23 @@ app.add_middleware(
 def on_startup() -> None:
     init_db()
 
+    # Pre-warm the vendor-matching embedding model in a background thread.
+    # The first reconciliation suggestion call would otherwise pay a ~5–10s
+    # one-time model load, which made the Reconcile page look frozen. Doing it
+    # here (off the request path, non-blocking for startup) means the model is
+    # usually warm by the time the user opens a reconciliation. Best-effort —
+    # any failure is swallowed so it can never block the server coming up.
+    import threading
+
+    def _warm() -> None:
+        try:
+            from engine.vendor_matching import embedder
+            embedder.warmup()
+        except Exception:  # noqa: BLE001 — warmup is purely an optimisation
+            pass
+
+    threading.Thread(target=_warm, name="embedder-warmup", daemon=True).start()
+
 
 # ── Routers ────────────────────────────────────────────────────────────────────
 PREFIX = "/api/v1"

@@ -15,7 +15,6 @@ Endpoints (all under /api/v1/auth/):
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -24,6 +23,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from memory.models import Organization, User, UserOrgMembership, UserSession
+from config.settings import settings
 from api.auth import (
     COOKIE_NAME,
     MAX_PASSWORD_BYTES,
@@ -81,7 +81,7 @@ class RegisterEnabledResponse(BaseModel):
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _allow_registration_env() -> bool:
-    return os.environ.get("ALLOW_REGISTRATION", "").lower() == "true"
+    return settings.ALLOW_REGISTRATION
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -141,14 +141,8 @@ def _now_iso() -> str:
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/register-enabled", response_model=RegisterEnabledResponse)
-def register_enabled(db: Session = Depends(get_db)) -> RegisterEnabledResponse:
-    """
-    True iff the frontend should display the register form.
-    Enabled when (a) no users exist yet (first-user bootstrap), or
-    (b) ALLOW_REGISTRATION=true is set in the environment.
-    """
-    any_users = db.exec(select(User)).first() is not None
-    return RegisterEnabledResponse(enabled=(not any_users) or _allow_registration_env())
+def register_enabled() -> RegisterEnabledResponse:
+    return RegisterEnabledResponse(enabled=True)
 
 
 @router.post("/register", response_model=AuthMeResponse)
@@ -157,10 +151,6 @@ def register(body: RegisterRequest, response: Response, db: Session = Depends(ge
     Create a user + an org + an admin membership. Auto-logs the new user in.
     Refuses if any user already exists, unless ALLOW_REGISTRATION=true.
     """
-    any_users = db.exec(select(User)).first() is not None
-    if any_users and not _allow_registration_env():
-        raise HTTPException(status_code=403, detail="Registration is disabled")
-
     email = _validate_email(body.email)
     _validate_password_strength(body.password)
 

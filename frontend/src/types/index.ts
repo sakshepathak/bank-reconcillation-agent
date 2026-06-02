@@ -227,6 +227,12 @@ export interface BankAccount {
   created_at: string
 }
 
+export interface BulkMatchItem {
+  id: number
+  amount: number
+  label: string
+}
+
 export interface StatementLine {
   id: number
   bank_account_id: number
@@ -241,6 +247,8 @@ export interface StatementLine {
   matched_bill_id: number | null
   matched_journal_id: number | null
   transfer_to_account_id: number | null
+  matched_invoice_ids: BulkMatchItem[] | null
+  matched_bill_ids: BulkMatchItem[] | null
   discussion: string | null
   suggested_score: number | null
   imported_at: string
