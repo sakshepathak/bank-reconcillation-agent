@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -53,3 +53,9 @@ adv-rag-model/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+
+# Generated Word docs (regenerate from the .md sources)
+*.docx
+
+# Test / sample data — may contain real statements (PII); keep out of the repo
+test_data/
