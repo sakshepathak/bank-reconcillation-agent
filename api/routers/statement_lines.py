@@ -21,8 +21,12 @@ from sqlmodel import Session, select
 
 from memory.models import (
     BankAccount, StatementLine, StatementLineStatus,
-    Invoice, Bill, JournalEntry, DocumentStatus, VendorAlias,
+    Invoice, Bill, JournalEntry, DocumentStatus, VendorAlias, Organization,
 )
+
+# Countries that write dates month-first (MM/DD/YYYY). Used only to break
+# ambiguous dates the statement data itself can't resolve.
+_MONTH_FIRST_COUNTRIES = {"US"}
 from api.schemas.models import (
     StatementLineResponse, StatementImportRequest,
     MatchInvoiceRequest, MatchBillRequest, CreateEntryRequest,
@@ -148,7 +152,9 @@ def import_lines(
 
     now = _now()
     created = []
+    total_movement = 0.0
     for ln in body.lines:
+        total_movement += (ln.received or 0.0) - (ln.spent or 0.0)
         s = StatementLine(
             org_id=org_id,
             bank_account_id=body.bank_account_id,
@@ -160,9 +166,8 @@ def import_lines(
         db.add(s)
         created.append(s)
 
-    # Update the bank's recorded statement_balance to the latest line's running balance
-    if body.lines and body.lines[-1].balance_after is not None:
-        acc.statement_balance = body.lines[-1].balance_after
+    # Reconciliation target = net of the imported credits/debits (see upload).
+    acc.statement_balance = round(acc.statement_balance + total_movement, 2)
     acc.last_imported_at = now
     db.add(acc)
 
@@ -403,8 +408,13 @@ async def upload_statement(
                 detail=f"Unsupported file type: {mime or 'unknown'}. Use CSV or PDF.",
             )
 
+    # Use the org's country only to break ambiguous DD/MM-vs-MM/DD dates that
+    # the statement data gives no other clue about.
+    org = db.get(Organization, org_id)
+    default_dayfirst = (org.country or "GB").upper() not in _MONTH_FIRST_COUNTRIES if org else True
+
     try:
-        df = await asyncio.to_thread(parse_bank_statement, contents, mime)
+        df = await asyncio.to_thread(parse_bank_statement, contents, mime, default_dayfirst)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(
             status_code=422, detail=f"Could not parse statement: {e}",
@@ -413,9 +423,11 @@ async def upload_statement(
     now = _now()
     created: list[StatementLine] = []
     last_balance_after: float | None = None
+    total_movement = 0.0   # sum of signed amounts across the imported lines
 
     for _, row in df.iterrows():
         amount = float(row.get("amount", 0.0))
+        total_movement += amount
         balance_after = row.get("balance_after")
         if balance_after is not None and not (isinstance(balance_after, float) and balance_after != balance_after):  # NaN check
             try:
@@ -438,8 +450,13 @@ async def upload_statement(
         db.add(s)
         created.append(s)
 
-    if last_balance_after is not None:
-        acc.statement_balance = last_balance_after
+    # Reconciliation target is the NET of the imported credits/debits — NOT the
+    # bank's running/closing balance. Accumulate so it covers every imported
+    # line. The OOO balance (moved by the reconcile actions as each line is
+    # matched) climbs to meet it, so the difference is exactly the amount still
+    # unreconciled → 0 once the statement is fully reconciled. The per-line
+    # running balance is still stored for display, just not used here.
+    acc.statement_balance = round(acc.statement_balance + total_movement, 2)
     acc.last_imported_at = now
     db.add(acc)
 

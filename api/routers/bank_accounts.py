@@ -19,17 +19,39 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _to_resp(b: BankAccount, pending_count: int) -> BankAccountResponse:
+def _computed_balances(db: Session, account_id: int, org_id: int) -> tuple[float, float]:
+    """
+    Single source of truth: DERIVE the account's balances from its statement
+    lines every time, instead of reading a stored field that can drift out of
+    sync. From the imported lines' credits (received) and debits (spent):
+
+        statement_balance = net of ALL imported lines        (the target)
+        ooo_balance       = net of the RECONCILED lines       (progress)
+        difference        = net of the still-PENDING lines  → 0 when fully done
+    """
+    rows = db.exec(
+        select(StatementLine.received, StatementLine.spent, StatementLine.status)
+        .where(StatementLine.bank_account_id == account_id)
+        .where(StatementLine.org_id == org_id)
+    ).all()
+    statement = sum((r or 0.0) - (s or 0.0) for r, s, _ in rows)
+    ooo = sum((r or 0.0) - (s or 0.0) for r, s, st in rows
+              if st != StatementLineStatus.PENDING)
+    return round(statement, 2), round(ooo, 2)
+
+
+def _to_resp(b: BankAccount, db: Session, org_id: int) -> BankAccountResponse:
+    statement_balance, ooo_balance = _computed_balances(db, b.id, org_id)
     return BankAccountResponse(
         id=b.id,
         name=b.name,
         account_number=b.account_number,
         bank_name=b.bank_name,
         currency=b.currency,
-        statement_balance=b.statement_balance,
-        ooo_balance=b.ooo_balance,
-        balance_difference=b.statement_balance - b.ooo_balance,
-        pending_count=pending_count,
+        statement_balance=statement_balance,
+        ooo_balance=ooo_balance,
+        balance_difference=round(statement_balance - ooo_balance, 2),
+        pending_count=_pending_count(db, b.id, org_id),
         last_imported_at=b.last_imported_at,
         is_active=b.is_active,
         created_at=b.created_at,
@@ -63,7 +85,7 @@ def list_accounts(
     if active_only:
         q = q.where(BankAccount.is_active == True)
     rows = db.exec(q).all()
-    return [_to_resp(b, _pending_count(db, b.id, org_id)) for b in rows]
+    return [_to_resp(b, db, org_id) for b in rows]
 
 
 @router.get("/{account_id}", response_model=BankAccountResponse)
@@ -73,7 +95,7 @@ def get_account(
     org_id: int = Depends(get_current_org_id),
 ):
     b = _load_account_for_org(db, account_id, org_id)
-    return _to_resp(b, _pending_count(db, b.id, org_id))
+    return _to_resp(b, db, org_id)
 
 
 @router.post("/", response_model=BankAccountResponse, status_code=201)
@@ -86,7 +108,7 @@ def create_account(
     db.add(b)
     db.commit()
     db.refresh(b)
-    return _to_resp(b, 0)
+    return _to_resp(b, db, org_id)
 
 
 @router.patch("/{account_id}", response_model=BankAccountResponse)
@@ -102,7 +124,7 @@ def update_account(
     db.add(b)
     db.commit()
     db.refresh(b)
-    return _to_resp(b, _pending_count(db, b.id, org_id))
+    return _to_resp(b, db, org_id)
 
 
 def _reverse_line_side_effects(line: StatementLine, db: Session, org_id: int) -> None:

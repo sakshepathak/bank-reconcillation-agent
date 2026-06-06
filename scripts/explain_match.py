@@ -154,7 +154,7 @@ def render_trace(trace: dict) -> None:
 _DEMO_CASES = [
     dict(  # exact: amount+date+name all line up
         bank_desc="ACME CORP", bank_amount=1200.00, bank_date="2026-05-06",
-        cand_label="INV-005", cand_vendor="Acme Corp", cand_amount=1200.00, cand_date="2026-05-06",
+        cand_label="INV-005", cand_vendor="Acme", cand_amount=1200.00, cand_date="2026-05-06",
     ),
     dict(  # semantic: spelling differs, embedding rescues
         bank_desc="SQ *DAILYBEAN COFFEE 03/14", bank_amount=4.50, bank_date="2026-03-14",
