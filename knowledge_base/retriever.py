@@ -51,31 +51,27 @@ class HybridRetriever:
         query: str,
         top_k: int | None = None,
         chunk_type_filter: str | None = None,
+        org_id: int | None = None,
     ) -> list[RetrievedChunk]:
         """
-        Hybrid search with optional chunk_type filtering.
+        Hybrid search with optional chunk_type and org_id filtering.
 
         Args:
             query: Natural-language or keyword query.
             top_k: Override RERANK_TOP_K from settings.
             chunk_type_filter: If set, only return chunks with this type
-                               (e.g. "rule" to get only matching rules).
+                               (e.g. "rule" to get only matching rules,
+                               "fact" to get org-taught facts).
+            org_id: If set, only return chunks belonging to this organisation.
+                    This is the multi-tenant guard — org-scoped facts MUST be
+                    searched with org_id so one org never sees another's notes.
 
         Returns:
             List of RetrievedChunk sorted by relevance (best first).
         """
         k = top_k or settings.RERANK_TOP_K
 
-        query_filter = None
-        if chunk_type_filter:
-            query_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="chunk_type",
-                        match=models.MatchValue(value=chunk_type_filter),
-                    )
-                ]
-            )
+        query_filter = self._build_filter(chunk_type_filter, org_id)
 
         dense_hits = self._dense_search(query, query_filter)
         sparse_hits = self._sparse_search(query, query_filter)
@@ -86,7 +82,76 @@ class HybridRetriever:
     def collection_exists(self) -> bool:
         return self._qdrant.collection_exists(settings.QDRANT_COLLECTION)
 
+    def ensure_collection(self) -> None:
+        """Create the hybrid collection if it doesn't exist yet (mirrors ingest)."""
+        if self._qdrant.collection_exists(settings.QDRANT_COLLECTION):
+            return
+        self._qdrant.create_collection(
+            collection_name=settings.QDRANT_COLLECTION,
+            vectors_config={
+                "dense": models.VectorParams(size=384, distance=models.Distance.COSINE),
+            },
+            sparse_vectors_config={
+                "sparse": models.SparseVectorParams(
+                    index=models.SparseIndexParams(),
+                    modifier=models.Modifier.IDF,
+                )
+            },
+        )
+
+    def add_fact(self, org_id: int, text: str, source: str = "chat") -> str:
+        """
+        Persist a single org-scoped fact into the KB so it's recalled in future
+        chats. Tagged with org_id + chunk_type='fact' so it's isolated per tenant
+        and cleaned up by the delete-org flow. Returns the new point id.
+        """
+        import uuid
+        from datetime import datetime, timezone
+
+        self.ensure_collection()
+        dense_vec = list(self._dense.embed([text]))[0].tolist()
+        sparse_obj = list(self._sparse.embed([text]))[0]
+        sparse_vec = models.SparseVector(
+            indices=sparse_obj.indices.tolist(),
+            values=sparse_obj.values.tolist(),
+        )
+        point_id = str(uuid.uuid4())
+        self._qdrant.upsert(
+            collection_name=settings.QDRANT_COLLECTION,
+            points=[
+                models.PointStruct(
+                    id=point_id,
+                    vector={"dense": dense_vec, "sparse": sparse_vec},
+                    payload={
+                        "org_id": org_id,
+                        "text": text,
+                        "enriched_text": text,
+                        "context": "",
+                        "source": source,
+                        "chunk_type": "fact",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+            ],
+        )
+        return point_id
+
     # ── Private helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _build_filter(
+        chunk_type_filter: str | None, org_id: int | None
+    ) -> models.Filter | None:
+        must = []
+        if org_id is not None:
+            must.append(models.FieldCondition(
+                key="org_id", match=models.MatchValue(value=org_id),
+            ))
+        if chunk_type_filter:
+            must.append(models.FieldCondition(
+                key="chunk_type", match=models.MatchValue(value=chunk_type_filter),
+            ))
+        return models.Filter(must=must) if must else None
 
     def _dense_search(
         self, query: str, query_filter: models.Filter | None
@@ -159,3 +224,17 @@ class HybridRetriever:
             score=getattr(hit, "_rrf_score", 0.0),
             chunk_type=payload.get("chunk_type", "general"),
         )
+
+
+# ── Shared singleton ─────────────────────────────────────────────────────────
+# One retriever (and therefore one set of embedding models) reused across the
+# whole process — loading fastembed models is expensive, so we never want two.
+
+_shared: HybridRetriever | None = None
+
+
+def get_retriever() -> HybridRetriever:
+    global _shared
+    if _shared is None:
+        _shared = HybridRetriever()
+    return _shared
