@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, RefreshCw, AlertTriangle, Receipt, FileSpreadsheet,
-  Landmark, Users, FileText, BookOpen, Settings, LogOut,
+  Landmark, Users, FileText, BookOpen, Settings, LogOut, Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth-context'
@@ -13,6 +13,7 @@ const NAV = [
   { to: '/purchases',       icon: FileSpreadsheet,  label: 'Purchases' },
   { to: '/bank-accounts',   icon: Landmark,         label: 'Bank Accounts' },
   { to: '/reconciliation',  icon: RefreshCw,        label: 'Reconcile' },
+  { to: '/assistant',       icon: Sparkles,         label: 'Assistant' },
   { to: '/exceptions',      icon: AlertTriangle,    label: 'Exceptions' },
   { to: '/contacts',        icon: Users,            label: 'Contacts' },
   { to: '/audit',           icon: FileText,         label: 'Audit Trail' },
@@ -24,7 +25,7 @@ export default function Sidebar() {
   const { user, logout } = useAuth()
 
   return (
-    <aside className="w-56 h-full flex-shrink-0 flex flex-col bg-gradient-to-b from-indigo-700 to-indigo-500 shadow-xl">
+    <aside className="w-56 h-full flex-shrink-0 flex flex-col bg-gradient-to-b from-primary to-[hsl(216_75%_34%)] shadow-xl">
       {/* Brand */}
       <div className="px-5 py-4 border-b border-white/15">
         <div className="flex items-center gap-2.5">

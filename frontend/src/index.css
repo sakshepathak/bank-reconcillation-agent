@@ -6,42 +6,52 @@
 
 @layer base {
   :root {
-    --background: 210 40% 98%;
-    --foreground: 222 84% 5%;
+    /* ── "Parchment & Marine" — warm cream canvas, muted marine blue brand ── */
 
-    --card: 0 0% 100%;
-    --card-foreground: 222 84% 5%;
+    /* Surfaces: cards float LIGHTER than the page (the warm-paper inversion) */
+    --background: 40 38% 97%;          /* #F8F4EC  page canvas */
+    --foreground: 30 12% 16%;          /* #2D2820  warm near-black text */
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 84% 5%;
+    --card: 40 33% 99%;                /* #FDFBF6  cards sit above the cream */
+    --card-foreground: 30 12% 16%;
 
-    /* Indigo primary — matches the Streamlit violet brand */
-    --primary: 239 84% 67%;
-    --primary-foreground: 0 0% 100%;
+    --popover: 40 40% 99%;             /* #FEFCF8 */
+    --popover-foreground: 30 12% 16%;
 
-    --secondary: 214 32% 91%;
-    --secondary-foreground: 222 47% 11%;
+    /* Brand: a confident, low-glare marine blue (not the old neon indigo) */
+    --primary: 216 72% 46%;            /* #1F60C4 */
+    --primary-foreground: 40 33% 99%;  /* ivory, stays in the warm world */
+    --primary-hover: 216 74% 41%;      /* #1B55B0  hover / pressed */
+    --primary-subtle: 216 60% 95%;     /* #E8F0FB  selected rows, washes */
 
-    --muted: 214 32% 96%;
-    --muted-foreground: 215 16% 47%;
+    --secondary: 38 24% 92%;           /* warm taupe fill */
+    --secondary-foreground: 30 12% 20%;
 
-    --accent: 232 100% 95%;
-    --accent-foreground: 234 89% 45%;
+    --muted: 38 24% 94%;               /* #F0EBE0  skeletons, inert fills */
+    --muted-foreground: 32 9% 44%;     /* #786F62  warm gray meta */
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 100%;
+    --accent: 216 60% 95%;             /* in-family hover (= primary-subtle) */
+    --accent-foreground: 216 72% 38%;
 
-    --success: 160 84% 39%;
-    --success-foreground: 0 0% 100%;
+    --destructive: 6 64% 51%;          /* #CF4F3F  terracotta */
+    --destructive-foreground: 40 33% 99%;
+    --destructive-subtle: 6 62% 95%;
 
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
+    --success: 152 46% 38%;            /* #348A5E  forest */
+    --success-foreground: 40 33% 99%;
+    --success-subtle: 152 40% 93%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 239 84% 67%;
+    --warning: 36 80% 46%;             /* #D38A1A  amber-gold */
+    --warning-foreground: 40 33% 99%;
+    --warning-subtle: 40 70% 92%;
 
-    --radius: 0.5rem;
+    --sidebar: 40 30% 97%;             /* quiet cream surface (for later shell) */
+
+    --border: 36 20% 87%;              /* #DED7C9  warm hairline */
+    --input: 36 22% 84%;               /* #D6CDBC  field border, reads inset */
+    --ring: 216 70% 54%;               /* softer than primary, legible on cream */
+
+    --radius: 0.625rem;                /* 10px — softer, more designed */
   }
 }
 
@@ -55,11 +65,17 @@
   }
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Even text selection stays on-brand */
+  ::selection {
+    background: hsl(var(--primary-subtle));
+    color: hsl(var(--primary-hover));
   }
 }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 9999px; }
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }

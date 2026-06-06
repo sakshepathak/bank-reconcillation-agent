@@ -17,9 +17,12 @@ const config: Config = {
         ring: 'hsl(var(--ring))',
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
+        sidebar: 'hsl(var(--sidebar))',
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
+          hover: 'hsl(var(--primary-hover))',
+          subtle: 'hsl(var(--primary-subtle))',
         },
         secondary: {
           DEFAULT: 'hsl(var(--secondary))',
@@ -28,6 +31,7 @@ const config: Config = {
         destructive: {
           DEFAULT: 'hsl(var(--destructive))',
           foreground: 'hsl(var(--destructive-foreground))',
+          subtle: 'hsl(var(--destructive-subtle))',
         },
         muted: {
           DEFAULT: 'hsl(var(--muted))',
@@ -44,16 +48,25 @@ const config: Config = {
         success: {
           DEFAULT: 'hsl(var(--success))',
           foreground: 'hsl(var(--success-foreground))',
+          subtle: 'hsl(var(--success-subtle))',
         },
         warning: {
           DEFAULT: 'hsl(var(--warning))',
           foreground: 'hsl(var(--warning-foreground))',
+          subtle: 'hsl(var(--warning-subtle))',
         },
       },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+      },
+      // Warm, paper-tinted elevation (shadows lean brown, never gray)
+      boxShadow: {
+        sm: '0 1px 3px hsl(32 30% 30% / 0.07), 0 1px 2px hsl(32 30% 30% / 0.05)',
+        DEFAULT: '0 2px 6px hsl(32 28% 28% / 0.07), 0 1px 2px hsl(32 28% 28% / 0.05)',
+        md: '0 4px 12px hsl(32 28% 28% / 0.08), 0 2px 4px hsl(32 28% 28% / 0.05)',
+        lg: '0 12px 28px hsl(32 28% 25% / 0.10), 0 4px 10px hsl(32 28% 25% / 0.06)',
       },
       fontFamily: {
         sans: ['Outfit', ...fontFamily.sans],
