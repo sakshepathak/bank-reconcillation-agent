@@ -6,22 +6,21 @@ don't depend on each other and don't touch your real DB.
 """
 from __future__ import annotations
 
-import os
-from contextlib import contextmanager
+import pytest
+
+from config.settings import settings as app_settings
 
 
-@contextmanager
-def _allow_registration():
-    """Toggle the env flag inside a single test."""
-    prev = os.environ.get("ALLOW_REGISTRATION")
-    os.environ["ALLOW_REGISTRATION"] = "true"
-    try:
-        yield
-    finally:
-        if prev is None:
-            os.environ.pop("ALLOW_REGISTRATION", None)
-        else:
-            os.environ["ALLOW_REGISTRATION"] = prev
+@pytest.fixture
+def registration_locked(monkeypatch):
+    """Simulate a locked-down production box (ALLOW_REGISTRATION=false).
+
+    We flip the attribute on the live settings object, NOT os.environ —
+    settings is parsed once at import, so changing the environment afterwards
+    has no effect. This is the seam that actually drives the endpoint, and
+    monkeypatch auto-restores it when the test finishes.
+    """
+    monkeypatch.setattr(app_settings, "ALLOW_REGISTRATION", False)
 
 
 # ── register-enabled probe ────────────────────────────────────────────────────
@@ -32,7 +31,8 @@ def test_register_enabled_true_when_no_users(client):
     assert r.json() == {"enabled": True}
 
 
-def test_register_enabled_false_after_first_user(client):
+def test_register_enabled_false_after_first_user_when_locked(client, registration_locked):
+    """Locked-down box: once the first user exists, the register form hides."""
     client.post(
         "/api/v1/auth/register",
         json={"email": "a@b.com", "password": "password1", "name": "A", "org_name": "Acme"},
@@ -42,15 +42,16 @@ def test_register_enabled_false_after_first_user(client):
     assert r.json() == {"enabled": False}
 
 
-def test_register_enabled_respects_env(client):
+def test_register_enabled_true_after_first_user_when_open(client):
+    """Default (registration open): the form stays available even after the
+    first user, so you can keep adding accounts."""
     client.post(
         "/api/v1/auth/register",
         json={"email": "a@b.com", "password": "password1", "name": "A", "org_name": "Acme"},
     )
-    with _allow_registration():
-        r = client.get("/api/v1/auth/register-enabled")
-        assert r.status_code == 200
-        assert r.json() == {"enabled": True}
+    r = client.get("/api/v1/auth/register-enabled")
+    assert r.status_code == 200
+    assert r.json() == {"enabled": True}
 
 
 # ── register ──────────────────────────────────────────────────────────────────
@@ -72,30 +73,41 @@ def test_register_creates_user_org_membership_and_logs_in(client):
     assert any(c.name == "session_token" for c in client.cookies.jar)
 
 
-def test_register_rejects_second_user_without_env(client):
+def test_register_allows_first_user_even_when_locked(client, registration_locked):
+    """Bootstrap: the very first account can always be created through the UI,
+    even on a locked-down box, so you're never shut out of an empty system."""
+    r = client.post(
+        "/api/v1/auth/register",
+        json={"email": "a@b.com", "password": "password1", "name": "A", "org_name": "Acme"},
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_register_rejects_second_user_when_locked(client, registration_locked):
+    """With registration locked, a SECOND account cannot be created via the API."""
     client.post(
         "/api/v1/auth/register",
         json={"email": "a@b.com", "password": "password1", "name": "A", "org_name": "Acme"},
     )
-    client.cookies.clear()  # Start fresh — emulate a different visitor
+    client.cookies.clear()  # emulate a different visitor
     r = client.post(
         "/api/v1/auth/register",
         json={"email": "b@b.com", "password": "password1", "name": "B", "org_name": "Beta"},
     )
-    assert r.status_code == 403
+    assert r.status_code == 403, r.text
 
 
-def test_register_allows_second_user_with_env(client):
+def test_register_allows_second_user_when_open(client):
+    """Default (registration open): anyone can create another account."""
     client.post(
         "/api/v1/auth/register",
         json={"email": "a@b.com", "password": "password1", "name": "A", "org_name": "Acme"},
     )
     client.cookies.clear()
-    with _allow_registration():
-        r = client.post(
-            "/api/v1/auth/register",
-            json={"email": "b@b.com", "password": "password1", "name": "B", "org_name": "Beta"},
-        )
+    r = client.post(
+        "/api/v1/auth/register",
+        json={"email": "b@b.com", "password": "password1", "name": "B", "org_name": "Beta"},
+    )
     assert r.status_code == 200, r.text
     assert r.json()["email"] == "b@b.com"
 
@@ -106,11 +118,10 @@ def test_register_rejects_duplicate_email(client):
         json={"email": "a@b.com", "password": "password1", "name": "A", "org_name": "Acme"},
     )
     client.cookies.clear()
-    with _allow_registration():
-        r = client.post(
-            "/api/v1/auth/register",
-            json={"email": "a@b.com", "password": "password2", "name": "X", "org_name": "Y"},
-        )
+    r = client.post(
+        "/api/v1/auth/register",
+        json={"email": "a@b.com", "password": "password2", "name": "X", "org_name": "Y"},
+    )
     assert r.status_code == 409
 
 

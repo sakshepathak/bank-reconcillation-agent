@@ -141,8 +141,16 @@ def _now_iso() -> str:
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/register-enabled", response_model=RegisterEnabledResponse)
-def register_enabled() -> RegisterEnabledResponse:
-    return RegisterEnabledResponse(enabled=True)
+def register_enabled(db: Session = Depends(get_db)) -> RegisterEnabledResponse:
+    """Frontend probe: should the register form show?
+
+    Enabled when either no user exists yet (so the first account can always be
+    bootstrapped through the UI) OR registration is explicitly allowed via the
+    ALLOW_REGISTRATION flag. This keeps the probe honest with what /register
+    actually accepts.
+    """
+    user_exists = db.exec(select(User)).first() is not None
+    return RegisterEnabledResponse(enabled=(not user_exists) or _allow_registration_env())
 
 
 @router.post("/register", response_model=AuthMeResponse)
@@ -153,6 +161,15 @@ def register(body: RegisterRequest, response: Response, db: Session = Depends(ge
     """
     email = _validate_email(body.email)
     _validate_password_strength(body.password)
+
+    # Registration gate: the first user can always bootstrap an account; after
+    # that, /register is only open when ALLOW_REGISTRATION is set. Matches the
+    # README's production guidance (lock the box down with the flag and create
+    # the first user via scripts/create_first_user.py). The default flag is
+    # True, so this changes nothing for local dev — it only closes the endpoint
+    # on a box that has explicitly set ALLOW_REGISTRATION=false.
+    if not _allow_registration_env() and db.exec(select(User)).first() is not None:
+        raise HTTPException(status_code=403, detail="Registration is disabled")
 
     if db.exec(select(User).where(User.email == email)).first():
         raise HTTPException(status_code=409, detail="Email already registered")
