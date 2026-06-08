@@ -142,15 +142,29 @@ class HybridRetriever:
     def _build_filter(
         chunk_type_filter: str | None, org_id: int | None
     ) -> models.Filter | None:
-        must = []
-        if org_id is not None:
-            must.append(models.FieldCondition(
-                key="org_id", match=models.MatchValue(value=org_id),
-            ))
+        """
+        Build the Qdrant filter for a tenant-scoped hybrid search.
+
+        Multi-tenant rule when `org_id` is given: return chunks that are EITHER
+        global (no `org_id` on the payload — the shared rules/SOPs/aliases) OR
+        owned by this org (`org_id` matches). A chunk owned by a DIFFERENT org is
+        never returned. This is the guard that keeps one tenant's private
+        facts/notes invisible to another while still sharing the common KB.
+
+        With `org_id=None` no org filter is applied (the search sees everything)
+        — callers that can touch private data MUST pass an org_id.
+        """
+        must: list = []
         if chunk_type_filter:
             must.append(models.FieldCondition(
                 key="chunk_type", match=models.MatchValue(value=chunk_type_filter),
             ))
+        if org_id is not None:
+            # global (org_id absent) OR this org's own chunks — never another org's
+            must.append(models.Filter(should=[
+                models.IsEmptyCondition(is_empty=models.PayloadField(key="org_id")),
+                models.FieldCondition(key="org_id", match=models.MatchValue(value=org_id)),
+            ]))
         return models.Filter(must=must) if must else None
 
     def _dense_search(

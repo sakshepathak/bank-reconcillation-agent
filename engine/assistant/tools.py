@@ -217,16 +217,19 @@ def bank_accounts_summary(db: Session, org_id: int) -> dict:
 # ── Knowledge base (RAG) + memory — org-scoped Qdrant ─────────────────────────
 
 def search_knowledge(db: Session, org_id: int, query: str) -> dict:
-    """Semantic search over THIS org's saved facts/notes (taught via chat)."""
+    """Semantic search over the knowledge this org can see: the shared
+    bank-reconciliation rules/SOPs PLUS this organisation's own saved
+    facts/notes. Org-scoped — never returns another org's private notes."""
     from knowledge_base.retriever import get_retriever
     try:
-        chunks = get_retriever().search(
-            query, top_k=5, chunk_type_filter="fact", org_id=org_id,
-        )
+        # No chunk_type filter: search the shared rules/SOPs/aliases AND this
+        # org's facts. org_id makes it "global-or-mine" (see _build_filter),
+        # so another org's private notes are never returned.
+        chunks = get_retriever().search(query, top_k=5, org_id=org_id)
     except Exception as exc:  # noqa: BLE001 — KB optional; never crash the turn
         return {"available": False, "note": "Knowledge base is unavailable right now.", "error": str(exc)}
     if not chunks:
-        return {"results": [], "note": "Nothing saved matches that yet — you can teach me with remember_fact."}
+        return {"results": [], "note": "Nothing in the knowledge base matches that yet — you can teach me with remember_fact."}
     return {"results": [{"text": c.text, "source": c.source, "relevance": round(c.score, 4)} for c in chunks]}
 
 
@@ -304,9 +307,10 @@ TOOL_SCHEMAS = [
         "left to reconcile, and how many statement lines are still pending.",
         {}, []),
     _fn("search_knowledge",
-        "Search this organisation's saved knowledge — facts and notes the team has taught the "
-        "assistant (e.g. what the business does, how they categorise certain vendors, internal "
-        "policies). Use for non-numeric, knowledge/'about us'/policy questions.",
+        "Search the knowledge base: shared bank-reconciliation rules and SOPs, plus this "
+        "organisation's own saved facts/notes (what the business does, how they categorise "
+        "vendors, internal policies). Use for any non-numeric 'how do we / what is / about "
+        "us / policy / procedure' question.",
         {"query": {"type": "string", "description": "What to look up."}},
         ["query"]),
     _fn("remember_fact",
