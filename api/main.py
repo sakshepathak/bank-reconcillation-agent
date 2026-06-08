@@ -25,7 +25,7 @@ from api.routers import (
     health, dashboard, runs, matches, contacts, company, aliases, audit, profile,
     bank_accounts, invoices, bills, journal_entries, statement_lines,
     exceptions as exceptions_router,
-    auth, orgs, chat,
+    auth, orgs, chat, kb,
 )
 
 app = FastAPI(
@@ -96,3 +96,4 @@ app.include_router(journal_entries.router, prefix=PREFIX)
 app.include_router(statement_lines.router, prefix=PREFIX)
 app.include_router(exceptions_router.router, prefix=PREFIX)
 app.include_router(chat.router,            prefix=PREFIX)
+app.include_router(kb.router,              prefix=PREFIX)

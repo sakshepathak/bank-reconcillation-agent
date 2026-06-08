@@ -45,6 +45,16 @@ _FOLDER_TO_TYPE: dict[str, str] = {
     "policies": "policy",
 }
 
+# Standalone app docs to ingest as GLOBAL "doc" knowledge, so the assistant can
+# explain what the software does and how to use it. User-facing docs only —
+# internal dev docs (TEST_PLAN, design notes) are deliberately excluded.
+_APP_DOC_FILES = [
+    "README.md",
+    "docs/FEATURES.md",
+    "docs/WALKTHROUGH.md",
+    "docs/DEMO_CHEATSHEET.md",
+]
+
 
 def _infer_chunk_type(file_path: str) -> str:
     parts = Path(file_path).parts
@@ -123,16 +133,23 @@ class Ingestor:
     # ── Public ────────────────────────────────────────────────────────────────
 
     def run(self, knowledge_dir: str = "knowledge") -> None:
-        """Ingest all markdown files under `knowledge_dir` recursively."""
+        """Ingest markdown under `knowledge_dir` plus the user-facing app docs."""
         self._setup_collection()
-        files = glob.glob(f"{knowledge_dir}/**/*.md", recursive=True)
-        if not files:
-            console.print(f"[yellow]No markdown files found in {knowledge_dir}/[/]")
-            return
 
-        console.print(f"[bold green]Found {len(files)} files to ingest...[/]")
-        for file_path in track(files, description="Ingesting..."):
-            self._process_file(file_path)
+        files = glob.glob(f"{knowledge_dir}/**/*.md", recursive=True)
+        if files:
+            console.print(f"[bold green]Found {len(files)} knowledge files to ingest...[/]")
+            for file_path in track(files, description="Ingesting..."):
+                self._process_file(file_path)
+        else:
+            console.print(f"[yellow]No markdown files found in {knowledge_dir}/[/]")
+
+        # App docs → global "doc" chunks (what the software does / how to use it)
+        doc_files = [f for f in _APP_DOC_FILES if os.path.exists(f)]
+        if doc_files:
+            console.print(f"[bold green]Ingesting {len(doc_files)} app docs as global knowledge...[/]")
+            for file_path in track(doc_files, description="Ingesting docs..."):
+                self._process_file(file_path, chunk_type="doc")
 
         console.print("[bold green]✓ Ingestion complete.[/]")
 
@@ -191,9 +208,10 @@ class Ingestor:
             console.print(f"[red]Context generation failed: {exc}[/]")
             return ""
 
-    def _process_file(self, file_path: str) -> None:
+    def _process_file(self, file_path: str, chunk_type: str | None = None) -> None:
         console.print(f"  [blue]→ {file_path}[/]")
-        chunk_type = _infer_chunk_type(file_path)
+        if chunk_type is None:
+            chunk_type = _infer_chunk_type(file_path)
 
         with open(file_path, "r", encoding="utf-8") as fh:
             full_text = fh.read()

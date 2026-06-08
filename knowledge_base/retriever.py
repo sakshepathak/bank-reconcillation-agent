@@ -136,6 +136,66 @@ class HybridRetriever:
         )
         return point_id
 
+    def upsert_chunk(
+        self,
+        *,
+        point_key: str,
+        text: str,
+        chunk_type: str,
+        org_id: int | None = None,
+        source: str = "sync",
+        context: str = "",
+    ) -> str:
+        """
+        Upsert one chunk with a DETERMINISTIC id derived from `point_key`, so
+        re-syncing the same logical thing (e.g. a contact) overwrites its chunk
+        instead of piling up duplicates. Pass `org_id` for per-tenant content
+        (company profile, contacts); leave it None for global/shared content.
+        """
+        import uuid
+        from datetime import datetime, timezone
+
+        self.ensure_collection()
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, point_key))
+        dense_vec = list(self._dense.embed([text]))[0].tolist()
+        sparse_obj = list(self._sparse.embed([text]))[0]
+        sparse_vec = models.SparseVector(
+            indices=sparse_obj.indices.tolist(),
+            values=sparse_obj.values.tolist(),
+        )
+        payload: dict = {
+            "text": text,
+            "enriched_text": text,
+            "context": context,
+            "source": source,
+            "chunk_type": chunk_type,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if org_id is not None:
+            payload["org_id"] = org_id
+        self._qdrant.upsert(
+            collection_name=settings.QDRANT_COLLECTION,
+            points=[models.PointStruct(
+                id=point_id,
+                vector={"dense": dense_vec, "sparse": sparse_vec},
+                payload=payload,
+            )],
+        )
+        return point_id
+
+    def delete_org_chunks(self, org_id: int, chunk_type: str) -> None:
+        """Remove all of an org's chunks of a given type — used before a re-sync
+        so rows deleted in the app don't leave stale chunks behind."""
+        if not self.collection_exists():
+            return
+        self._qdrant.delete(
+            collection_name=settings.QDRANT_COLLECTION,
+            points_selector=models.FilterSelector(filter=models.Filter(must=[
+                models.FieldCondition(key="org_id", match=models.MatchValue(value=org_id)),
+                models.FieldCondition(key="chunk_type", match=models.MatchValue(value=chunk_type)),
+            ])),
+        )
+
     # ── Private helpers ───────────────────────────────────────────────────────
 
     @staticmethod
