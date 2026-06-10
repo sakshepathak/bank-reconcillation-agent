@@ -33,6 +33,42 @@ EMBEDDING_FLOOR = 0.60   # embedding < this is treated as "no signal"
 EMBEDDING_BLEND = 0.65   # weight on embedding when blending with lexical
 
 
+def resolve_alias(
+    bank_desc: str,
+    bank_canonical: str,
+    alias_map: Optional[dict[str, str]],
+) -> Optional[str]:
+    """
+    Resolve a learned vendor alias for a bank description → canonical vendor name.
+
+    Matching is intentionally generous, because a user adds the *distinctive part*
+    of a vendor name and expects it to catch the full, noisy bank string:
+      1. exact match on the raw lowercased description
+      2. exact match on the normalized canonical form
+      3. the alias text appears as a substring of the description or its canonical
+         (e.g. alias "ingram content grp" catches "INGRAM CONTENT GRP NASHVILLE")
+
+    The substring pass requires a reasonably specific alias (>= 4 chars) so a tiny
+    alias can't match everything, and the LONGEST matching alias wins. Returns the
+    canonical vendor name, or None when nothing is learned for this description.
+    """
+    if not alias_map:
+        return None
+    lookup = (bank_desc or "").strip().lower()
+    canon = (bank_canonical or "").strip().lower()
+    if lookup and lookup in alias_map:
+        return alias_map[lookup]
+    if canon and canon in alias_map:
+        return alias_map[canon]
+    best_key: Optional[str] = None
+    best_val: Optional[str] = None
+    for key, canonical_name in alias_map.items():
+        if len(key) >= 4 and ((lookup and key in lookup) or (canon and key in canon)):
+            if best_key is None or len(key) > len(best_key):
+                best_key, best_val = key, canonical_name
+    return best_val
+
+
 @dataclass(frozen=True)
 class Candidate:
     """One ranked invoice candidate for a bank description."""
@@ -82,14 +118,9 @@ def find_matches(
     bank_norm = canonicalize(bank_desc)
     inv_norms = [canonicalize(v) for v in invoice_vendors]
 
-    # Tier 4: alias DB lookup. If hit, that gives us a stronger canonical form.
-    alias_canonical = None
-    if alias_map:
-        lookup = (bank_desc or "").strip().lower()
-        alias_canonical = alias_map.get(lookup)
-        if alias_canonical is None:
-            # Also try the canonical form (lowercased) so re-canonicalizing aliases works
-            alias_canonical = alias_map.get(bank_norm.canonical.lower())
+    # Tier 4: alias DB lookup (exact + substring). If hit, that gives us a
+    # stronger canonical form to match candidates against.
+    alias_canonical = resolve_alias(bank_desc, bank_norm.canonical, alias_map)
 
     candidates: list[Candidate] = []
     for idx, inv in enumerate(inv_norms):

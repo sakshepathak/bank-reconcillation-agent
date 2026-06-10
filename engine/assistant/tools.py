@@ -10,13 +10,13 @@ dict/list. No LLM in here — these are the "exact answer" layer.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlmodel import Session, select
 
 from memory.models import (
-    Invoice, Bill, Contact, BankAccount, StatementLine,
+    Invoice, Bill, Contact, BankAccount, StatementLine, VendorAlias,
     DocumentStatus, StatementLineStatus,
 )
 
@@ -246,6 +246,84 @@ def remember_fact(db: Session, org_id: int, fact: str) -> dict:
     return {"saved": True, "fact": text}
 
 
+def add_vendor_alias(db: Session, org_id: int, name_a: str, name_b: str) -> dict:
+    """
+    Teach the reconciliation matcher that two vendor names are the SAME entity —
+    e.g. a bank statement says "PENGUIN RANDOM HOUSE WHOLESALE" but the bill is
+    from "Penguin Random House". This writes a real VendorAlias row (NOT a KB
+    note), so the next reconciliation run matches the statement line to that
+    vendor's invoice/bill exactly. This is what to call for "X and Y are the same
+    supplier/customer/vendor", "treat X as Y", "X is just Y".
+    """
+    from engine.vendor_matching.normalizer import canonicalize
+
+    a = (name_a or "").strip()
+    b = (name_b or "").strip()
+    if not a or not b:
+        return {"saved": False, "error": "Need both names to link."}
+
+    # Work out which name is the canonical vendor (the one that already appears
+    # on an invoice/bill/contact) and which is the messy bank-statement variant.
+    known: set[str] = set()
+    for inv in db.exec(select(Invoice).where(Invoice.org_id == org_id)).all():
+        if inv.contact_name:
+            known.add(inv.contact_name)
+    for bill in db.exec(select(Bill).where(Bill.org_id == org_id)).all():
+        if bill.contact_name:
+            known.add(bill.contact_name)
+    for c in db.exec(select(Contact).where(Contact.org_id == org_id)).all():
+        if c.full_name:
+            known.add(c.full_name)
+    known_by_canon = {canonicalize(n).canonical: n for n in known}
+
+    a_known = canonicalize(a).canonical in known_by_canon
+    b_known = canonicalize(b).canonical in known_by_canon
+
+    if b_known and not a_known:
+        variant, canonical = a, known_by_canon[canonicalize(b).canonical]
+    elif a_known and not b_known:
+        variant, canonical = b, known_by_canon[canonicalize(a).canonical]
+    else:
+        # Neither (or both) is a known document vendor — keep the caller's order;
+        # the second name is treated as the canonical vendor.
+        variant, canonical = a, b
+
+    alias_key = variant.lower()
+    matched_contact = next(
+        (c for c in db.exec(select(Contact).where(Contact.org_id == org_id)).all()
+         if (c.full_name or "").strip().lower() == canonical.lower()),
+        None,
+    )
+
+    # Upsert so re-teaching the same variant updates rather than duplicates.
+    existing = db.exec(
+        select(VendorAlias).where(VendorAlias.org_id == org_id, VendorAlias.alias == alias_key)
+    ).first()
+    now = datetime.now(timezone.utc).isoformat()
+    if existing:
+        existing.canonical_name = canonical
+        if matched_contact:
+            existing.contact_id = matched_contact.id
+        existing.source = "chat"
+        db.add(existing)
+    else:
+        db.add(VendorAlias(
+            org_id=org_id, alias=alias_key, canonical_name=canonical,
+            contact_id=matched_contact.id if matched_contact else None,
+            confidence=1.0, source="chat", created_at=now,
+        ))
+    db.commit()
+
+    return {
+        "saved": True,
+        "statement_name": variant,
+        "canonical_vendor": canonical,
+        "linked_to_known_vendor": canonical in known,
+        "note": f"Saved. Future reconciliations will treat bank lines reading "
+                f"'{variant}' as '{canonical}' — an exact alias match.",
+    }
+
+
 # ── Registry + OpenAI/Groq-style tool schemas ─────────────────────────────────
 
 TOOLS = {
@@ -257,6 +335,7 @@ TOOLS = {
     "bank_accounts_summary": bank_accounts_summary,
     "search_knowledge": search_knowledge,
     "remember_fact": remember_fact,
+    "add_vendor_alias": add_vendor_alias,
 }
 
 
@@ -314,9 +393,19 @@ TOOL_SCHEMAS = [
         {"query": {"type": "string", "description": "What to look up."}},
         ["query"]),
     _fn("remember_fact",
-        "Save a fact to this organisation's long-term knowledge so it's recalled in future chats. "
-        "Call this whenever the user tells you something to remember (e.g. 'remember we treat "
-        "Stripe payouts as revenue', 'our business caters children's parties').",
+        "Save a general fact to this organisation's long-term knowledge so it's recalled in future "
+        "chats (e.g. 'we treat Stripe payouts as revenue', 'our business caters children's parties'). "
+        "Do NOT use this for vendor-name equivalences — use add_vendor_alias for those.",
         {"fact": {"type": "string", "description": "A concise statement of the fact to store."}},
         ["fact"]),
+    _fn("add_vendor_alias",
+        "Teach the reconciliation MATCHER that two vendor names are the same entity, so future "
+        "reconciliation runs match the bank line to that vendor's invoice/bill. Call this WHENEVER "
+        "the user says two names are the same vendor/supplier/customer, e.g. 'Penguin Random House "
+        "Wholesale and Penguin Random House are the same', 'treat AMZN MKTPL as Amazon', 'X is just "
+        "Y'. Pass both names; the tool figures out which is the canonical vendor. This writes a real "
+        "alias the engine uses — it is NOT the same as remember_fact (which only stores a note).",
+        {"name_a": {"type": "string", "description": "One of the two names (either order is fine)."},
+         "name_b": {"type": "string", "description": "The other name."}},
+        ["name_a", "name_b"]),
 ]

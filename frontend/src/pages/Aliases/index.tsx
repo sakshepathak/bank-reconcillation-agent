@@ -15,6 +15,7 @@ export default function Aliases() {
   const [alias, setAlias] = useState('')
   const [canonical, setCanonical] = useState('')
   const [deleteId, setDeleteId] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const { data: aliases, isLoading } = useQuery<VendorAlias[]>({
     queryKey: ['aliases'],
@@ -22,12 +23,14 @@ export default function Aliases() {
   })
 
   const createMutation = useMutation({
-    mutationFn: () => api.post('/aliases/', { alias, canonical_name: canonical, confidence: 1.0 }),
+    mutationFn: () => api.post('/aliases/', { alias: alias.trim(), canonical_name: canonical.trim(), confidence: 1.0 }),
     onSuccess: () => {
+      setError(null)
       setAlias('')
       setCanonical('')
       queryClient.invalidateQueries({ queryKey: ['aliases'] })
     },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Could not add alias — please try again.'),
   })
 
   const deleteMutation = useMutation({
@@ -81,8 +84,11 @@ export default function Aliases() {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            Raw text is lowercased automatically. Use exact substrings the bank uses.
+            Enter the distinctive part of the bank text (lowercased automatically). The matcher
+            treats it as a substring — e.g. <span className="font-mono">ingram content grp</span> catches
+            “INGRAM CONTENT GRP NASHVILLE”.
           </p>
+          {error && <p className="text-xs text-destructive mt-2">{error}</p>}
         </CardContent>
       </Card>
 

@@ -333,25 +333,57 @@ async def upload_bills_csv(
                     status_val = s
 
             contact = upsert_contact(db, org_id=org_id, name=supplier_name, contact_type="supplier")
-            b = Bill(
-                org_id=org_id,
-                number=number,
-                contact_id=contact.id,
-                contact_name=supplier_name,
-                issue_date=issue_date,
-                due_date=due_date,
-                currency=currency,
-                status=DocumentStatus(status_val),
-                subtotal=amount,
-                tax_total=0.0,
-                total=amount,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(b)
-            db.commit()
-            db.refresh(b)
 
+            # De-dupe by bill number within the org: re-importing the same CSV
+            # updates the existing bill in place instead of piling on duplicate
+            # rows. Rows without a number always create new records.
+            b = None
+            if number:
+                b = db.exec(
+                    select(Bill).where(Bill.org_id == org_id, Bill.number == number)
+                ).first()
+
+            if b is not None:
+                b.contact_id = contact.id
+                b.contact_name = supplier_name
+                b.issue_date = issue_date
+                b.due_date = due_date
+                b.currency = currency
+                b.status = DocumentStatus(status_val)
+                b.subtotal = amount
+                b.tax_total = 0.0
+                b.total = amount
+                b.updated_at = now
+                db.add(b)
+                db.commit()
+                db.refresh(b)
+            else:
+                b = Bill(
+                    org_id=org_id,
+                    number=number,
+                    contact_id=contact.id,
+                    contact_name=supplier_name,
+                    issue_date=issue_date,
+                    due_date=due_date,
+                    currency=currency,
+                    status=DocumentStatus(status_val),
+                    subtotal=amount,
+                    tax_total=0.0,
+                    total=amount,
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(b)
+                db.commit()
+                db.refresh(b)
+
+            # Replace line items so the single imported line always matches the
+            # current amount (covers both the create and the update path).
+            existing_lines = db.exec(
+                select(BillLine).where(BillLine.bill_id == b.id, BillLine.org_id == org_id)
+            ).all()
+            for l in existing_lines:
+                db.delete(l)
             line = BillLine(
                 org_id=org_id,
                 bill_id=b.id,

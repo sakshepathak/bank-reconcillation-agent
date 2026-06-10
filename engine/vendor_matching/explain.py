@@ -21,7 +21,7 @@ from typing import Optional
 
 from .normalizer import canonicalize
 from .similarity import _WEIGHTS
-from .matcher import find_matches, LEXICAL_LOCK_IN, EMBEDDING_FLOOR, EMBEDDING_BLEND
+from .matcher import find_matches, resolve_alias, LEXICAL_LOCK_IN, EMBEDDING_FLOOR, EMBEDDING_BLEND
 
 
 # Strength bands — kept in lockstep with the frontend's match.ts (HIGH/MID_HIGH/MID_LOW).
@@ -71,9 +71,8 @@ def explain_candidate(
     bank_norm = canonicalize(bank_desc)
     cand_norm = canonicalize(cand_vendor)
 
-    # ── Step 2: alias lookup (Tier 4) ────────────────────────────────────────
-    lookup = (bank_desc or "").strip().lower()
-    alias_canonical = alias_map.get(lookup) or alias_map.get(bank_norm.canonical.lower())
+    # ── Step 2: alias lookup (Tier 4) — exact + substring, same as the matcher ─
+    alias_canonical = resolve_alias(bank_desc, bank_norm.canonical, alias_map)
     alias_hit = alias_canonical is not None
 
     # ── Steps 3–5: run the REAL matcher for this one candidate ────────────────
