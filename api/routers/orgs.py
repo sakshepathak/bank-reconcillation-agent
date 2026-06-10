@@ -30,7 +30,7 @@ from sqlmodel import Session, select
 from memory.models import (
     Organization, User, UserOrgMembership, UserSession,
     # Org-scoped business tables wiped on org deletion:
-    StatementLine, MatchRecord, InvoiceLine, BillLine, VendorAlias,
+    StatementLine, MatchRecord, AuditLog, InvoiceLine, BillLine, VendorAlias,
     Invoice, Bill, JournalEntry, ServiceOffered, BankAccount, Contact,
     ManualLedgerEntry, ExtractedInvoice, CompanyProfile,
 )
@@ -47,6 +47,7 @@ router = APIRouter(prefix="/orgs", tags=["orgs"])
 _ORG_SCOPED_MODELS = [
     StatementLine,      # references invoice/bill/journal/bank_account
     MatchRecord,
+    AuditLog,           # append-only reconciliation history
     InvoiceLine,        # references invoice, service_offered
     BillLine,           # references bill
     VendorAlias,        # references contact

@@ -80,6 +80,57 @@ class MatchRecord(SQLModel, table=True):
     created_at: str = Field(default="")      # ISO datetime string
 
 
+class AuditAction(str, Enum):
+    """Every reconciliation decision recorded in the live audit trail."""
+    MATCH_INVOICE = "match_invoice"
+    MATCH_BILL = "match_bill"
+    MATCH_BULK_INVOICES = "match_bulk_invoices"
+    MATCH_BULK_BILLS = "match_bulk_bills"
+    CREATE_ENTRY = "create_entry"
+    TRANSFER = "transfer"
+    DISCUSS = "discuss"
+    UNRECONCILE = "unreconcile"
+
+
+class AuditLog(SQLModel, table=True):
+    """
+    Append-only audit trail of every reconciliation decision in the LIVE app
+    (the Reconcile screen). One row per action. Line + target details are
+    snapshotted inline so a record stays meaningful even after the statement
+    line it refers to is deleted. Immutable: rows are only ever inserted.
+    """
+
+    __tablename__ = "audit_log"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: Optional[int] = Field(default=None, foreign_key="organization.id", index=True)
+    created_at: str = Field(default="", index=True)            # ISO datetime
+
+    # Who did it (snapshot the name so it survives a user rename/removal)
+    actor_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    actor_name: str = Field(default="")
+
+    action: str = Field(index=True)                            # AuditAction value
+
+    # Statement-line snapshot
+    statement_line_id: Optional[int] = Field(default=None, index=True)
+    bank_account_id: Optional[int] = Field(default=None, index=True)
+    line_date: Optional[str] = None                            # the transaction date
+    line_description: str = Field(default="")
+    amount: float = Field(default=0.0)                         # signed net (+in / -out)
+    currency: str = Field(default="GBP")
+
+    # What the action targeted (invoice/bill/journal/account/bulk/none)
+    target_type: Optional[str] = None
+    target_id: Optional[int] = None
+    target_label: str = Field(default="")                      # e.g. "INV-014 · Acme Ltd"
+
+    # Match context (when known)
+    method: Optional[str] = None                               # matching method
+    score: Optional[float] = None                              # 0-1 confidence
+    detail: str = Field(default="")                            # human-readable note
+
+
 class ExtractedInvoice(SQLModel, table=True):
     """
     Structured data extracted from an uploaded invoice/bill (PDF or image)

@@ -16,12 +16,13 @@ import asyncio
 import json
 from collections import defaultdict
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from memory.models import (
     BankAccount, StatementLine, StatementLineStatus,
     Invoice, Bill, JournalEntry, DocumentStatus, VendorAlias, Organization,
+    AuditLog, AuditAction, User,
 )
 
 # Countries that write dates month-first (MM/DD/YYYY). Used only to break
@@ -34,10 +35,12 @@ from api.schemas.models import (
     MatchBulkInvoicesRequest, MatchBulkBillsRequest,
     BulkMatchSuggestionsResponse, BulkMatchOpenDoc,
 )
-from api.deps import get_db, get_current_org_id
+from api.deps import get_db, get_current_org_id, require_user
 from engine.bank_statement_parser import parse_bank_statement
 from engine.vendor_matching.matcher import find_matches as match_vendors
 from engine.vendor_matching.explain import explain_candidate
+from engine.llm.factory import get_llm
+from engine.llm.base import LLMError
 
 _STATEMENT_MIMES = {
     "text/csv", "application/vnd.ms-excel",
@@ -112,6 +115,47 @@ def _load_account_for_org(db: Session, account_id: int, org_id: int) -> BankAcco
     return acc
 
 
+def _log_audit(
+    db: Session,
+    *,
+    org_id: int,
+    actor: User,
+    action: AuditAction,
+    line: StatementLine,
+    target_type: str | None = None,
+    target_id: int | None = None,
+    target_label: str = "",
+    method: str | None = None,
+    score: float | None = None,
+    detail: str = "",
+) -> None:
+    """
+    Append one immutable audit row for a reconcile action. Snapshots the line +
+    target so the record stays readable even if the line is later removed. Added
+    to the SAME transaction as the action, so action and audit commit atomically.
+    """
+    acc = db.get(BankAccount, line.bank_account_id)
+    db.add(AuditLog(
+        org_id=org_id,
+        created_at=_now(),
+        actor_id=getattr(actor, "id", None),
+        actor_name=(getattr(actor, "name", "") or getattr(actor, "email", "") or "—"),
+        action=action.value,
+        statement_line_id=line.id,
+        bank_account_id=line.bank_account_id,
+        line_date=line.date,
+        line_description=line.description or "",
+        amount=_net_amount(line),
+        currency=(acc.currency if acc else "GBP"),
+        target_type=target_type,
+        target_id=target_id,
+        target_label=target_label,
+        method=method,
+        score=score,
+        detail=detail,
+    ))
+
+
 # ── List / read ──────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=list[StatementLineResponse])
@@ -128,6 +172,119 @@ def list_lines(
         q = q.where(StatementLine.status == status)
     q = q.order_by(StatementLine.date.desc())
     return [_to_resp(s) for s in db.exec(q).all()]
+
+
+# ── Pipeline run (batch explainability) ──────────────────────────────────────
+# NOTE: these static-path routes MUST be declared BEFORE "/{line_id}" below.
+# FastAPI matches routes in declaration order, so if "/{line_id}" came first a
+# GET to /statement-lines/pipeline(-lines) would be captured by it and 422 while
+# trying to parse "pipeline" as an integer.
+
+def _build_pipeline_entry(s: StatementLine, db: Session, org_id: int) -> dict:
+    """Score one statement line and assemble its top candidate + full trace."""
+    is_inflow = s.received > 0
+    amount = s.received if is_inflow else s.spent
+
+    suggestions = get_suggestions(s.id, db, org_id)
+    top = suggestions[0] if suggestions else None
+    trace = None
+    if top is not None:
+        trace = explain_suggestion(s.id, top["type"], top["id"], db, org_id)
+
+    return {
+        "line": {
+            "id": s.id,
+            "date": str(s.date)[:10],
+            "description": s.description,
+            "reference": s.reference,
+            "spent": s.spent,
+            "received": s.received,
+            "amount": amount,
+            "direction": "in" if is_inflow else "out",
+            "status": s.status.value if hasattr(s.status, "value") else str(s.status),
+        },
+        "candidate_count": len(suggestions),
+        "top_candidate": top,
+        "trace": trace,
+    }
+
+
+@router.get("/pipeline")
+def pipeline_run(
+    bank_account_id: int | None = None,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+) -> dict:
+    """
+    Run the full matching cascade over EVERY statement line at once and return
+    each line's top candidate plus the complete step-by-step trace.
+
+    This is the "Pipeline Run" demo surface: upload a whole statement + invoices,
+    then watch the engine score each entry and see every intermediate it computed.
+    The numbers are identical to the live Reconcile screen because this reuses the
+    same `get_suggestions()` + `explain_candidate()` the rest of the app uses.
+    """
+    q = select(StatementLine).where(StatementLine.org_id == org_id)
+    if bank_account_id is not None:
+        q = q.where(StatementLine.bank_account_id == bank_account_id)
+    q = q.order_by(StatementLine.date.asc())
+    lines = db.exec(q).all()
+
+    entries = [_build_pipeline_entry(s, db, org_id) for s in lines]
+
+    bands = {"strong": 0, "likely": 0, "possible": 0, "weak": 0, "none": 0}
+    methods: dict[str, int] = {}
+    for e in entries:
+        if e["trace"] is not None:
+            band = e["trace"]["final"]["strength"]
+            method = e["trace"]["final"]["method"]
+            bands[band] = bands.get(band, 0) + 1
+            methods[method] = methods.get(method, 0) + 1
+        else:
+            bands["none"] += 1
+
+    total = len(entries)
+    auto = bands["strong"]
+    return {
+        "summary": {
+            "bank_account_id": bank_account_id,
+            "total": total,
+            "auto_matched": auto,
+            "needs_review": bands["likely"] + bands["possible"] + bands["weak"],
+            "unmatched": bands["none"],
+            "match_rate": round(auto / total * 100, 1) if total else 0.0,
+            "bands": bands,
+            "methods": methods,
+        },
+        "entries": entries,
+    }
+
+
+@router.get("/pipeline-lines")
+def pipeline_lines(
+    bank_account_id: int | None = None,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+) -> list[dict]:
+    """
+    Just the line ids/descriptions to process — the frontend fetches this first,
+    then streams one `/{line_id}/pipeline-entry` call per line so the UI can show
+    the engine working through the statement live, line by line.
+    """
+    q = select(StatementLine).where(StatementLine.org_id == org_id)
+    if bank_account_id is not None:
+        q = q.where(StatementLine.bank_account_id == bank_account_id)
+    q = q.order_by(StatementLine.date.asc())
+    return [
+        {
+            "id": s.id,
+            "date": str(s.date)[:10],
+            "description": s.description,
+            "amount": s.received if s.received > 0 else s.spent,
+            "direction": "in" if s.received > 0 else "out",
+        }
+        for s in db.exec(q).all()
+    ]
 
 
 @router.get("/{line_id}", response_model=StatementLineResponse)
@@ -380,6 +537,73 @@ def explain_suggestion(
     return trace
 
 
+@router.get("/{line_id}/pipeline-entry")
+def pipeline_entry(
+    line_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+) -> dict:
+    """One line's top candidate + full trace — the unit the live Pipeline Run streams."""
+    s = _load_line_for_org(db, line_id, org_id)
+    return _build_pipeline_entry(s, db, org_id)
+
+
+def _narrative_prompt(trace: dict) -> str:
+    """Turn a scoring trace into a compact, plain-English explanation prompt."""
+    inp = trace.get("input", {})
+    steps = {s.get("n"): s for s in trace.get("steps", [])}
+    final = trace.get("final", {})
+    s1, s2, s3, s4, s5, s6 = (steps.get(n, {}) for n in (1, 2, 3, 4, 5, 6))
+
+    lines = [
+        f"Bank line: \"{inp.get('bank_description')}\" for {inp.get('bank_amount')} on {inp.get('bank_date')}.",
+        f"Candidate: {inp.get('candidate_vendor')} ({inp.get('candidate_label')}) "
+        f"for {inp.get('candidate_amount')} on {inp.get('candidate_date')}.",
+        f"Step 1 normalise: '{s1.get('bank_canonical')}' vs '{s1.get('candidate_canonical')}'.",
+        f"Step 2 learned-alias lookup: {'HIT → ' + str(s2.get('resolved_to')) if s2.get('hit') else 'no match'}.",
+        f"Step 3 spelling similarity composite: {s3.get('composite')}.",
+        (
+            f"Step 4 AI meaning/embedding: cosine {s4.get('cosine')} (floor {s4.get('floor')})."
+            if s4.get("fired") else "Step 4 AI meaning check: skipped (spelling already strong)."
+        ),
+        f"Step 5 best-signal name score: {s5.get('name_score')} via method '{s5.get('method')}'.",
+        f"Step 6 composite = amount {s6.get('amount_component')} ({s6.get('amount_reason')}) "
+        f"+ date {s6.get('date_component')} ({s6.get('date_reason')}) "
+        f"+ name {s6.get('name_component')} = {s6.get('total')}.",
+        f"Verdict: {final.get('score_pct')}% — {final.get('strength_label')}.",
+    ]
+    context = "\n".join(lines)
+    return (
+        "You explain an automated bank-reconciliation engine to a non-technical finance manager.\n"
+        "Below is the real trace of how ONE bank line was scored against ONE invoice/bill, "
+        "as it cascaded through six stages.\n\n"
+        f"{context}\n\n"
+        "Write 2–3 short, plain-English sentences narrating how the decision cascaded "
+        "(normalise the names → check learned aliases → spelling similarity → AI meaning check → "
+        "combine amount, date and name into one score → verdict) and why it landed where it did. "
+        "Reference the key numbers naturally. No jargon, no bullet points, no preamble."
+    )
+
+
+@router.post("/narrate")
+def narrate_trace(
+    trace: dict = Body(...),
+    org_id: int = Depends(get_current_org_id),
+) -> dict:
+    """
+    Turn a scoring trace into a plain-English explanation via the LLM.
+
+    The matching itself stays fully deterministic; the model is used only to
+    narrate the numbers for a human — exactly the "use a model where the data
+    can't speak for itself" line the rest of the codebase follows.
+    """
+    try:
+        res = get_llm().complete_text(_narrative_prompt(trace), max_tokens=260)
+    except LLMError as e:
+        raise HTTPException(status_code=503, detail=f"LLM unavailable: {e}")
+    return {"narrative": res.text.strip(), "provider": res.provider, "model": res.model}
+
+
 @router.post("/upload", response_model=list[StatementLineResponse], status_code=201)
 async def upload_statement(
     bank_account_id: int = Form(...),
@@ -621,6 +845,7 @@ def match_bulk_invoices(
     body: MatchBulkInvoicesRequest,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
     """
     Match a PENDING statement line (money-in) to multiple invoices whose
@@ -667,6 +892,12 @@ def match_bulk_invoices(
     s.reconciled_at = now
     _apply_balance(db, s.bank_account_id, target, org_id)
 
+    _log_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.MATCH_BULK_INVOICES, line=s,
+        target_type="bulk", target_label=f"{len(allocations)} invoices",
+        detail=f"Split across invoice IDs {', '.join(str(a['id']) for a in allocations)}",
+    )
+
     db.add(s)
     db.commit()
     db.refresh(s)
@@ -679,6 +910,7 @@ def match_bulk_bills(
     body: MatchBulkBillsRequest,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
     """
     Match a PENDING statement line (money-out) to multiple bills whose
@@ -724,6 +956,12 @@ def match_bulk_bills(
     s.reconciled_at = now
     _apply_balance(db, s.bank_account_id, -target, org_id)
 
+    _log_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.MATCH_BULK_BILLS, line=s,
+        target_type="bulk", target_label=f"{len(allocations)} bills",
+        detail=f"Split across bill IDs {', '.join(str(a['id']) for a in allocations)}",
+    )
+
     db.add(s)
     db.commit()
     db.refresh(s)
@@ -738,6 +976,7 @@ def match_invoice(
     body: MatchInvoiceRequest,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
     s = _load_line_for_org(db, line_id, org_id)
     _require_pending(s)
@@ -758,6 +997,14 @@ def match_invoice(
 
     _apply_balance(db, s.bank_account_id, amount, org_id)
 
+    _log_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.MATCH_INVOICE, line=s,
+        target_type="invoice", target_id=inv.id,
+        target_label=f"{inv.number} · {inv.contact_name}",
+        score=s.suggested_score,
+        detail=f"Matched to invoice {inv.number} ({inv.contact_name})",
+    )
+
     db.add(s); db.add(inv)
     db.commit()
     db.refresh(s)
@@ -770,6 +1017,7 @@ def match_bill(
     body: MatchBillRequest,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
     s = _load_line_for_org(db, line_id, org_id)
     _require_pending(s)
@@ -791,6 +1039,14 @@ def match_bill(
 
     _apply_balance(db, s.bank_account_id, amount, org_id)
 
+    _log_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.MATCH_BILL, line=s,
+        target_type="bill", target_id=bill.id,
+        target_label=f"{bill.number or f'Bill #{bill.id}'} · {bill.contact_name}",
+        score=s.suggested_score,
+        detail=f"Matched to bill {bill.number or bill.id} ({bill.contact_name})",
+    )
+
     db.add(s); db.add(bill)
     db.commit()
     db.refresh(s)
@@ -803,6 +1059,7 @@ def create_entry(
     body: CreateEntryRequest,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
     s = _load_line_for_org(db, line_id, org_id)
     _require_pending(s)
@@ -822,6 +1079,13 @@ def create_entry(
 
     _apply_balance(db, s.bank_account_id, amount, org_id)
 
+    _log_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.CREATE_ENTRY, line=s,
+        target_type="journal", target_id=j.id,
+        target_label=(body.contact_name or body.description or "Journal entry"),
+        detail=f"Created journal entry: {body.description or '—'}",
+    )
+
     db.add(s)
     db.commit()
     db.refresh(s)
@@ -834,6 +1098,7 @@ def transfer(
     body: TransferRequest,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
     s = _load_line_for_org(db, line_id, org_id)
     _require_pending(s)
@@ -849,6 +1114,13 @@ def transfer(
     _apply_balance(db, s.bank_account_id, amount, org_id)
     _apply_balance(db, body.to_account_id, -amount, org_id)
 
+    _log_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.TRANSFER, line=s,
+        target_type="account", target_id=to_acc.id,
+        target_label=f"Transfer → {to_acc.name}",
+        detail=f"Marked as a transfer to {to_acc.name}",
+    )
+
     db.add(s)
     db.commit()
     db.refresh(s)
@@ -861,12 +1133,18 @@ def discuss(
     body: DiscussRequest,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
     s = _load_line_for_org(db, line_id, org_id)
     s.discussion = body.note
     # Discussing doesn't reconcile — keep PENDING unless already resolved
     if s.status == StatementLineStatus.PENDING:
         s.status = StatementLineStatus.DISCUSSED
+    _log_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.DISCUSS, line=s,
+        target_type="none", target_label="Note added",
+        detail=body.note or "",
+    )
     db.add(s)
     db.commit()
     db.refresh(s)
@@ -878,6 +1156,7 @@ def unreconcile(
     line_id: int,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
     """Undo any reconcile action, restoring the line to PENDING."""
     s = _load_line_for_org(db, line_id, org_id)
@@ -951,6 +1230,19 @@ def unreconcile(
     elif s.transfer_to_account_id:
         _apply_balance(db, s.bank_account_id, -amount, org_id)
         _apply_balance(db, s.transfer_to_account_id, amount, org_id)
+
+    _log_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.UNRECONCILE, line=s,
+        target_type="none", target_label="Unreconciled",
+        detail="Undid " + (
+            f"invoice match (#{s.matched_invoice_id})" if s.matched_invoice_id
+            else f"bill match (#{s.matched_bill_id})" if s.matched_bill_id
+            else f"journal entry (#{s.matched_journal_id})" if s.matched_journal_id
+            else f"transfer to account #{s.transfer_to_account_id}" if s.transfer_to_account_id
+            else "a bulk match" if (getattr(s, "matched_invoice_ids", None) or getattr(s, "matched_bill_ids", None))
+            else "a reconciliation"
+        ),
+    )
 
     s.matched_invoice_id = None
     s.matched_bill_id = None
