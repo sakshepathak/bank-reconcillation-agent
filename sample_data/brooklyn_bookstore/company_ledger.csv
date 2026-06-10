@@ -1,0 +1,21 @@
+txn_id,date,description,amount
+BILL-2026-006,2026-01-02,Brooklyn Realty LLC | rent January | BILL-2026-006,4800.00
+INV-2026-001,2026-01-03,PS 58 Elementary School | school book order | INV-2026-001,1240.00
+BILL-2026-001,2026-01-05,Penguin Random House | wholesale book order | BILL-2026-001,2150.00
+INV-2026-002,2026-01-05,Greenpoint Library | library order | INV-2026-002,865.50
+INV-2026-003,2026-01-05,Park Slope Cafe | book order | INV-2026-003,320.00
+BILL-2026-005,2026-01-06,Macmillan Publishers | wholesale order | BILL-2026-005,2700.00
+INV-2026-006,2026-01-06,Brooklyn Public Schools | district book order | INV-2026-006,4500.00
+BILL-2026-003,2026-01-07,HarperCollins | wholesale order | BILL-2026-003,980.00
+BILL-2026-002,2026-01-08,Ingram Content Group | distributor invoice | BILL-2026-002,1432.75
+INV-2026-004,2026-01-08,Park Slope Cafe | book order | INV-2026-004,180.00
+BILL-2026-007,2026-01-09,Con Edison | electricity bill | BILL-2026-007,312.40
+INV-2026-005,2026-01-10,Park Slope Cafe | book order | INV-2026-005,250.00
+INV-2026-009,2026-01-10,Williamsburg High School | school book order | INV-2026-009,1800.00
+BILL-2026-004,2026-01-11,HarperCollins | wholesale order | BILL-2026-004,1220.00
+INV-2026-007,2026-01-13,Brooklyn Brewery | event book sales | INV-2026-007,530.00
+BILL-2026-008,2026-01-15,Shopify | monthly subscription | BILL-2026-008,79.00
+BILL-2026-009,2026-01-17,Brooklyn Coffee Roasters | cafe supplies | BILL-2026-009,145.00
+INV-2026-010,2026-01-21,Fort Greene Cafe | mugs and book order | INV-2026-010,475.00
+INV-2026-008,2026-01-27,Cobble Hill Cafe | book order | INV-2026-008,410.00
+BILL-2026-010,2026-01-28,Simon & Schuster | wholesale order | BILL-2026-010,760.00

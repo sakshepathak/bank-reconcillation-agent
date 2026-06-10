@@ -9,6 +9,7 @@ import Sales from '@/pages/Sales'
 import Purchases from '@/pages/Purchases'
 import BankAccounts from '@/pages/BankAccounts'
 import Reconciliation from '@/pages/Reconciliation'
+import PipelineRun from '@/pages/PipelineRun'
 import Assistant from '@/pages/Assistant'
 import Exceptions from '@/pages/ReviewQueue'   // folder kept; exported component is Exceptions
 import Contacts from '@/pages/Contacts'
@@ -59,6 +60,7 @@ export default function App() {
             <Route path="purchases"      element={<Purchases />} />
             <Route path="bank-accounts"  element={<BankAccounts />} />
             <Route path="reconciliation" element={<Reconciliation />} />
+            <Route path="pipeline"       element={<PipelineRun />} />
             <Route path="assistant"      element={<Assistant />} />
             <Route path="exceptions"     element={<Exceptions />} />
             <Route path="contacts"       element={<Contacts />} />

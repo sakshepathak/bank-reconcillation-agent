@@ -1,0 +1,11 @@
+number,customer,date,due_date,amount,currency,status
+INV-2026-001,PS 58 Elementary School,2026-01-03,2026-01-17,1240.00,USD,awaiting_payment
+INV-2026-002,Greenpoint Library,2026-01-05,2026-01-19,865.50,USD,awaiting_payment
+INV-2026-003,Park Slope Cafe,2026-01-05,2026-01-19,320.00,USD,awaiting_payment
+INV-2026-004,Park Slope Cafe,2026-01-08,2026-01-22,180.00,USD,awaiting_payment
+INV-2026-005,Park Slope Cafe,2026-01-10,2026-01-24,250.00,USD,awaiting_payment
+INV-2026-006,Brooklyn Public Schools,2026-01-06,2026-01-20,4500.00,USD,awaiting_payment
+INV-2026-007,Brooklyn Brewery,2026-01-13,2026-01-27,530.00,USD,awaiting_payment
+INV-2026-008,Cobble Hill Cafe,2026-01-27,2026-02-10,410.00,USD,awaiting_payment
+INV-2026-009,Williamsburg High School,2026-01-10,2026-01-24,1800.00,USD,awaiting_payment
+INV-2026-010,Fort Greene Cafe,2026-01-21,2026-02-04,475.00,USD,awaiting_payment

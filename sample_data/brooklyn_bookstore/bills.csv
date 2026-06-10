@@ -1,0 +1,11 @@
+number,supplier,date,due_date,amount,currency,status
+BILL-2026-001,Penguin Random House,2026-01-05,2026-01-19,2150.00,USD,awaiting_payment
+BILL-2026-002,Ingram Content Group,2026-01-08,2026-01-22,1432.75,USD,awaiting_payment
+BILL-2026-003,HarperCollins,2026-01-07,2026-01-21,980.00,USD,awaiting_payment
+BILL-2026-004,HarperCollins,2026-01-11,2026-01-25,1220.00,USD,awaiting_payment
+BILL-2026-005,Macmillan Publishers,2026-01-06,2026-01-20,2700.00,USD,awaiting_payment
+BILL-2026-006,Brooklyn Realty LLC,2026-01-02,2026-01-02,4800.00,USD,awaiting_payment
+BILL-2026-007,Con Edison,2026-01-09,2026-01-23,312.40,USD,awaiting_payment
+BILL-2026-008,Shopify,2026-01-15,2026-01-15,79.00,USD,awaiting_payment
+BILL-2026-009,Brooklyn Coffee Roasters,2026-01-17,2026-01-31,145.00,USD,awaiting_payment
+BILL-2026-010,Simon & Schuster,2026-01-28,2026-02-11,760.00,USD,awaiting_payment

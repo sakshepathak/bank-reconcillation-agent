@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, RefreshCw, AlertTriangle, Receipt, FileSpreadsheet,
-  Landmark, Users, FileText, BookOpen, Settings, LogOut, Sparkles,
+  Landmark, Users, FileText, BookOpen, Settings, LogOut, Sparkles, Workflow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth-context'
@@ -13,6 +13,7 @@ const NAV = [
   { to: '/purchases',       icon: FileSpreadsheet,  label: 'Purchases' },
   { to: '/bank-accounts',   icon: Landmark,         label: 'Bank Accounts' },
   { to: '/reconciliation',  icon: RefreshCw,        label: 'Reconcile' },
+  { to: '/pipeline',        icon: Workflow,         label: 'Pipeline Run' },
   { to: '/assistant',       icon: Sparkles,         label: 'Assistant' },
   { to: '/exceptions',      icon: AlertTriangle,    label: 'Exceptions' },
   { to: '/contacts',        icon: Users,            label: 'Contacts' },

@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useIsFetching, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check, ArrowRightLeft, MessageSquare, Plus, Sparkles,
-  Landmark, Loader2, ChevronDown, ChevronUp,
+  Landmark, Loader2, ChevronDown, ChevronUp, ArrowDownUp,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -170,6 +170,14 @@ function ReconcileForAccount({
   const done = Math.max(0, total - analysing)
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
 
+  // Presentational date sort for the lines list (toggle: oldest ↔ newest). Sorts a
+  // copy so we never mutate the query cache; the backend default is newest-first.
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const sortedLines = useMemo(
+    () => [...lines].sort((a, b) => (sortDir === 'asc' ? 1 : -1) * a.date.localeCompare(b.date)),
+    [lines, sortDir],
+  )
+
   return (
     <div className="space-y-3">
       {/* Header */}
@@ -267,7 +275,21 @@ function ReconcileForAccount({
         </Card>
       ) : (
         <div className="space-y-2">
-          {lines.map((line) => (
+          <div className="flex items-center justify-between gap-2 px-1">
+            <p className="text-xs font-medium text-muted-foreground">
+              {lines.length} pending line{lines.length === 1 ? '' : 's'}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+              title="Sort the lines by statement date"
+            >
+              <ArrowDownUp className="w-3.5 h-3.5 mr-1.5" />
+              {sortDir === 'asc' ? 'Oldest first' : 'Newest first'}
+            </Button>
+          </div>
+          {sortedLines.map((line) => (
             <ReconcileRow
               key={line.id}
               line={line}
