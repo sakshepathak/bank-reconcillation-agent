@@ -431,10 +431,14 @@ class StatementImportRequest(BaseModel):
 
 class MatchInvoiceRequest(BaseModel):
     invoice_id: int
+    # When true, save this bank description → invoice vendor as a learned
+    # VendorAlias so future reconciliations match it automatically.
+    learn_alias: bool = False
 
 
 class MatchBillRequest(BaseModel):
     bill_id: int
+    learn_alias: bool = False
 
 
 class MatchBulkInvoicesRequest(BaseModel):

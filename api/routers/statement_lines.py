@@ -38,6 +38,7 @@ from api.schemas.models import (
 from api.deps import get_db, get_current_org_id, require_user
 from engine.bank_statement_parser import parse_bank_statement
 from engine.vendor_matching.matcher import find_matches as match_vendors
+from engine.vendor_matching.normalizer import canonicalize
 from engine.vendor_matching.explain import explain_candidate
 from engine.reconcile_rules import (
     score_date, cap_by_name, auto_match_ready, is_ambiguous, BAND_LIKELY, AMBIGUITY_EPS,
@@ -157,6 +158,47 @@ def _log_audit(
         score=score,
         detail=detail,
     ))
+
+
+def _maybe_learn_alias(
+    db: Session,
+    org_id: int,
+    line: StatementLine,
+    canonical_name: str | None,
+    contact_id: int | None = None,
+) -> bool:
+    """
+    Self-learning: when the user approves a match, optionally remember this bank
+    description → vendor so the engine matches it automatically next time.
+
+    Stores the CLEANED (canonicalized) form of the description as the alias key,
+    so it survives varying transaction-id/reference noise on future statements.
+    No-op when the description or vendor is blank, or when an equivalent alias
+    already exists (we never duplicate). Added to the caller's transaction so it
+    commits atomically with the reconcile action. Returns True if one was created.
+    """
+    desc = (line.description or "").strip()
+    vendor = (canonical_name or "").strip()
+    if not desc or not vendor:
+        return False
+    key = (canonicalize(desc).canonical or desc).strip().lower()
+    if not key:
+        return False
+    existing = db.exec(
+        select(VendorAlias).where(VendorAlias.org_id == org_id, VendorAlias.alias == key)
+    ).first()
+    if existing is not None:
+        return False  # already learned — don't pile on duplicates
+    db.add(VendorAlias(
+        org_id=org_id,
+        alias=key,
+        canonical_name=vendor,
+        contact_id=contact_id,
+        confidence=1.0,
+        source="human",
+        created_at=_now(),
+    ))
+    return True
 
 
 # ── List / read ──────────────────────────────────────────────────────────────
@@ -1051,6 +1093,9 @@ def match_invoice(
 
     _apply_balance(db, s.bank_account_id, amount, org_id)
 
+    if body.learn_alias:
+        _maybe_learn_alias(db, org_id, s, inv.contact_name, inv.contact_id)
+
     _log_audit(
         db, org_id=org_id, actor=user, action=AuditAction.MATCH_INVOICE, line=s,
         target_type="invoice", target_id=inv.id,
@@ -1092,6 +1137,9 @@ def match_bill(
     bill.updated_at = _now()
 
     _apply_balance(db, s.bank_account_id, amount, org_id)
+
+    if body.learn_alias:
+        _maybe_learn_alias(db, org_id, s, bill.contact_name, bill.contact_id)
 
     _log_audit(
         db, org_id=org_id, actor=user, action=AuditAction.MATCH_BILL, line=s,

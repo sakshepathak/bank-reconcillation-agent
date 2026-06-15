@@ -471,6 +471,9 @@ function MatchTab({
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [bulkOpen, setBulkOpen] = useState(false)
+  // Self-learning: default-on for inferred matches, opt-out via the checkbox.
+  const [learnAlias, setLearnAlias] = useState(true)
+  const queryClient = useQueryClient()
 
   // Bulk suggestions — vendor-identified from bank description
   const { data: bulkData } = useQuery<BulkMatchData>({
@@ -497,6 +500,10 @@ function MatchTab({
     [suggestions, selectedKey],
   )
 
+  // Only offer to learn when the engine INFERRED the match (spelling/AI). An
+  // alias-exact match is already learned; a same-name match needs no alias.
+  const canLearn = !!selected && (selected.method === 'fuzzy' || selected.method === 'fuzzy+embed')
+
   const matchMutation = useMutation({
     mutationFn: () => {
       if (!selected) throw new Error('no selection')
@@ -504,13 +511,18 @@ function MatchTab({
         selected.type === 'invoice'
           ? `/statement-lines/${line.id}/match-invoice`
           : `/statement-lines/${line.id}/match-bill`
+      const learn = canLearn && learnAlias
       const body =
         selected.type === 'invoice'
-          ? { invoice_id: selected.id }
-          : { bill_id: selected.id }
+          ? { invoice_id: selected.id, learn_alias: learn }
+          : { bill_id: selected.id, learn_alias: learn }
       return api.post(endpoint, body)
     },
-    onSuccess,
+    onSuccess: () => {
+      // Reflect a newly-learned alias on the Vendor Aliases page immediately.
+      if (canLearn && learnAlias) queryClient.invalidateQueries({ queryKey: ['aliases'] })
+      onSuccess()
+    },
   })
 
   const hasBulkDocs = (bulkData?.open_docs.length ?? 0) >= 2
@@ -609,6 +621,22 @@ function MatchTab({
             )
           })}
         </div>
+      )}
+
+      {/* Self-learning opt-in — only when the engine inferred the vendor name */}
+      {hasRegular && canLearn && (
+        <label className="flex items-start gap-2 pt-1 text-[11px] text-muted-foreground cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={learnAlias}
+            onChange={(e) => setLearnAlias(e.target.checked)}
+            className="mt-0.5 h-3.5 w-3.5 rounded border-input accent-primary flex-shrink-0"
+          />
+          <span>
+            Remember <span className="font-medium text-foreground">“{selected?.contact_name}”</span> for this
+            description, so it auto-matches next time.
+          </span>
+        </label>
       )}
 
       {/* Single-match OK button */}
