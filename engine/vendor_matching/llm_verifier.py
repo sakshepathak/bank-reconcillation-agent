@@ -1,10 +1,12 @@
 """
 LLM verifier — last-resort matching for unmatched bank lines.
 
-After the deterministic cascade (Levels 1-5) and the relaxed pass (Level 6a)
-have done their work, this module takes whatever is still unmatched and asks
-the LLM to make a judgment call. ONE batched call per reconciliation run, not
-per-pair — so cost is bounded regardless of dataset size.
+After the deterministic composite scorer (amount + date + name, see
+`engine/reconcile_rules.py` and `knowledge/rules/matching_rules.md`) has ranked
+candidates and the confident ones have been handled, this optional module takes
+whatever is still unmatched and asks the LLM to make a judgment call. ONE batched
+call per reconciliation run, not per-pair — so cost is bounded regardless of
+dataset size.
 
 Design notes:
   - Structured output via Pydantic schema — Gemini enforces, OpenRouter sends

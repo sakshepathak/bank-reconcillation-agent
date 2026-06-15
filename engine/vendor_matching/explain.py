@@ -22,6 +22,7 @@ from typing import Optional
 from .normalizer import canonicalize
 from .similarity import _WEIGHTS
 from .matcher import find_matches, resolve_alias, LEXICAL_LOCK_IN, EMBEDDING_FLOOR, EMBEDDING_BLEND
+from ..reconcile_rules import score_date, cap_by_name, auto_match_ready
 
 
 # Strength bands — kept in lockstep with the frontend's match.ts (HIGH/MID_HIGH/MID_LOW).
@@ -56,6 +57,8 @@ def explain_candidate(
     cand_vendor: str,
     cand_amount: float,
     cand_date: str,
+    cand_due_date: Optional[str] = None,
+    same_currency: bool = True,
     alias_map: Optional[dict[str, str]] = None,
 ) -> dict:
     """
@@ -104,23 +107,24 @@ def explain_candidate(
     else:
         amount_component, amount_reason = 0.0, f"amount differs by {amount_diff:.2f}"
 
+    # Asymmetric, terms-aware date rule (shared with /suggestions via reconcile_rules).
+    date_component, date_reason = score_date(bank_date, cand_date, cand_due_date)
     dd = _date_diff_days(bank_date, cand_date)
-    if dd is None:
-        date_component, date_reason = 0.0, "date unknown"
-    elif dd == 0:
-        date_component, date_reason = 0.2, "same day"
-    elif dd <= 3:
-        date_component, date_reason = 0.17, f"{dd}d apart"
-    elif dd <= 14:
-        date_component, date_reason = 0.10, f"{dd}d apart"
-    elif dd <= 30:
-        date_component, date_reason = 0.05, f"{dd}d apart"
-    else:
-        date_component, date_reason = 0.0, f"{dd}d apart"
 
     name_component = round(name_raw * 0.3, 4)
-    total = round(min(amount_component + date_component + name_component, 1.0), 4)
+    # Name similarity caps the label (shared with /suggestions via reconcile_rules):
+    # amount + date alone can't push a wrong-vendor coincidence into a high band.
+    total = round(cap_by_name(min(amount_component + date_component + name_component, 1.0), name_raw), 4)
     strength, strength_label = _strength(total)
+
+    # Per-candidate readiness for hands-off auto-reconcile. Uniqueness (only one
+    # such candidate) and pending-status are enforced by the live endpoint, not here.
+    ready = auto_match_ready(
+        amount_exact=amount_diff < 0.01,
+        name_method=method,
+        date_component=date_component,
+        same_currency=same_currency,
+    )
 
     # ── Assemble the ordered trace ───────────────────────────────────────────
     steps = [
@@ -190,10 +194,14 @@ def explain_candidate(
         {
             "n": 7,
             "title": "Verdict",
-            "detail": "Band the composite into a strength label; ≥0.90 is auto-approve quality.",
+            "detail": "Band the composite into a strength label; ≥0.90 is auto-approve quality. "
+                      "Hands-off auto-reconcile needs more: exact amount, a KNOWN vendor "
+                      "(alias/exact name, not a guess), an in-window date, same currency — "
+                      "and that it's the only such candidate (checked when matching).",
             "strength": strength,
             "label": strength_label,
             "auto_approve_quality": total >= _HIGH,
+            "auto_match_ready": ready,
             "needs_human_review": total < _HIGH,
         },
     ]

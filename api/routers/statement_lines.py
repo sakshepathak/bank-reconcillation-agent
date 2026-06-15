@@ -39,6 +39,9 @@ from api.deps import get_db, get_current_org_id, require_user
 from engine.bank_statement_parser import parse_bank_statement
 from engine.vendor_matching.matcher import find_matches as match_vendors
 from engine.vendor_matching.explain import explain_candidate
+from engine.reconcile_rules import (
+    score_date, cap_by_name, auto_match_ready, is_ambiguous, BAND_LIKELY, AMBIGUITY_EPS,
+)
 from engine.llm.factory import get_llm
 from engine.llm.base import LLMError
 
@@ -364,10 +367,10 @@ def get_suggestions(
                 Invoice.status != DocumentStatus.VOIDED,
             )
         ).all()
-        # (id, label, contact, date, outstanding, currency)
+        # (id, label, contact, date, outstanding, currency, due_date)
         cands = [
             (d.id, d.number, d.contact_name, d.issue_date,
-             round(d.total - d.paid_amount, 2), d.currency)
+             round(d.total - d.paid_amount, 2), d.currency, d.due_date)
             for d in docs if (d.total - d.paid_amount) > 0
         ]
         cand_type = "invoice"
@@ -381,13 +384,17 @@ def get_suggestions(
         ).all()
         cands = [
             (d.id, d.number or f"Bill #{d.id}", d.contact_name, d.issue_date,
-             round(d.total - d.paid_amount, 2), d.currency)
+             round(d.total - d.paid_amount, 2), d.currency, d.due_date)
             for d in docs if (d.total - d.paid_amount) > 0
         ]
         cand_type = "bill"
 
     if not cands:
         return []
+
+    # Currency the line is denominated in (StatementLine inherits its bank account's).
+    acc = db.get(BankAccount, s.bank_account_id)
+    line_currency = acc.currency if acc else "GBP"
 
     # ── Name match via the real vendor matcher (alias + canonical + fuzzy + embed) ──
     alias_rows = db.exec(select(VendorAlias).where(VendorAlias.org_id == org_id)).all()
@@ -407,16 +414,9 @@ def get_suggestions(
         nm.invoice_idx: (nm.score, nm.method) for nm in name_matches
     }
 
-    # ── Date diff helper ────────────────────────────────────────────────────
-    def date_diff(a: str, b: str) -> int | None:
-        try:
-            return (datetime.fromisoformat(a) - datetime.fromisoformat(b)).days
-        except (ValueError, TypeError):
-            return None
-
     # ── Score every candidate ───────────────────────────────────────────────
     out: list[dict] = []
-    for idx, (cid, label, contact, doc_date, outstanding, currency) in enumerate(cands):
+    for idx, (cid, label, contact, doc_date, outstanding, currency, due_date) in enumerate(cands):
         reasons: list[str] = []
 
         # Amount component (0–0.5)
@@ -434,22 +434,10 @@ def get_suggestions(
             amount_score = 0.0
             reasons.append(f"amount differs by {diff:.2f}")
 
-        # Date component (0–0.2)
-        d = date_diff(s.date, doc_date)
-        if d is None:
-            date_score = 0.0
-        else:
-            ad = abs(d)
-            if ad == 0:
-                date_score = 0.2; reasons.append("same day")
-            elif ad <= 3:
-                date_score = 0.17; reasons.append(f"{ad}d apart")
-            elif ad <= 14:
-                date_score = 0.10; reasons.append(f"{ad}d apart")
-            elif ad <= 30:
-                date_score = 0.05; reasons.append(f"{ad}d apart")
-            else:
-                date_score = 0.0; reasons.append(f"{ad}d apart")
+        # Date component (0–0.2) — asymmetric: don't punish a normal payment delay
+        # after the invoice; treat a payment dated BEFORE it as a red flag.
+        date_score, date_reason = score_date(s.date, doc_date, due_date)
+        reasons.append(date_reason)
 
         # Name component (0–0.3) via the proper matcher
         name_score_raw, method = name_score_by_idx.get(idx, (0.0, "no-name"))
@@ -460,7 +448,9 @@ def get_suggestions(
             reasons.append(f"name fuzzy ({int(name_score_raw * 100)}%)")
         # else: silent, don't clutter
 
-        composite = min(amount_score + date_score + name_score, 1.0)
+        # Name similarity caps the confidence LABEL: amount + date alone can't make
+        # a wrong-vendor coincidence look "Likely"/"Strong" (see reconcile_rules).
+        composite = cap_by_name(min(amount_score + date_score + name_score, 1.0), name_score_raw)
 
         out.append({
             "type": cand_type,
@@ -473,9 +463,38 @@ def get_suggestions(
             "score": round(composite, 3),
             "reason": ", ".join(reasons) or "low confidence",
             "method": method,
+            # Per-candidate readiness for hands-off auto-reconcile (uniqueness
+            # enforced below). Stored under a private key, finalised after sort.
+            "_ready": auto_match_ready(
+                amount_exact=diff < 0.01,
+                name_method=method,
+                date_component=date_score,
+                same_currency=(currency == line_currency),
+            ),
         })
 
     out.sort(key=lambda x: x["score"], reverse=True)
+
+    # ── Ambiguity: flag a near-tie among the best candidates ─────────────────
+    # Two same-amount, same-vendor docs score alike — warn, and bar both from
+    # hands-off auto-reconcile so we never silently pick the wrong one.
+    ambiguous = len(out) >= 2 and is_ambiguous(out[0]["score"], out[1]["score"])
+    tied = (
+        {id(c) for c in out if c["score"] >= BAND_LIKELY
+         and abs(c["score"] - out[0]["score"]) <= AMBIGUITY_EPS}
+        if ambiguous else set()
+    )
+
+    # ── Auto-eligibility: certain AND the only such candidate AND line pending ─
+    ready_count = sum(1 for c in out if c["_ready"])
+    line_pending = s.status == StatementLineStatus.PENDING
+    for c in out:
+        ready = c.pop("_ready")
+        c["ambiguous"] = id(c) in tied
+        c["auto_eligible"] = bool(
+            ready and ready_count == 1 and line_pending and not c["ambiguous"]
+        )
+
     return out[:5]
 
 
@@ -520,6 +539,9 @@ def explain_suggestion(
 
     outstanding = round(doc.total - doc.paid_amount, 2)
 
+    acc = db.get(BankAccount, s.bank_account_id)
+    line_currency = acc.currency if acc else "GBP"
+
     alias_rows = db.exec(select(VendorAlias).where(VendorAlias.org_id == org_id)).all()
     alias_map = {a.alias.lower(): a.canonical_name for a in alias_rows}
 
@@ -531,6 +553,8 @@ def explain_suggestion(
         cand_vendor=doc.contact_name or "",
         cand_amount=outstanding,
         cand_date=doc.issue_date,
+        cand_due_date=doc.due_date,
+        same_currency=(doc.currency == line_currency),
         alias_map=alias_map,
     )
     trace["candidate"] = {"type": doc_type, "id": doc_id}
@@ -692,6 +716,15 @@ async def upload_statement(
 
 # ── Bulk-match helpers ───────────────────────────────────────────────────────
 
+def _vendor_key(doc) -> str:
+    """Stable identity for 'same vendor' checks — contact_id when present, else
+    the normalised contact name. Used to enforce single-vendor split payments."""
+    cid = getattr(doc, "contact_id", None)
+    if cid:
+        return f"id:{cid}"
+    return f"name:{(getattr(doc, 'contact_name', '') or '').strip().lower()}"
+
+
 def _find_bulk_combinations(
     items: list[tuple[int, float]],   # (id, outstanding_amount)
     target: float,
@@ -794,13 +827,14 @@ def get_bulk_suggestions(
         if top_score >= 0.25:           # loose threshold — user can see the list
             top_vendor = unique_vendors[nm.invoice_idx]
 
-    # ── Filter to top vendor's docs ──────────────────────────────────────────
-    if top_vendor:
-        vendor_docs = [d for d in open_docs if d.contact_name == top_vendor]
-    else:
-        # No clear vendor — still expose all open docs (user can pick manually)
-        vendor_docs = open_docs
-
+    # ── Filter to the ONE statement-matched vendor ───────────────────────────
+    # A split payment is, by definition, one vendor settling several of their own
+    # documents in a single transfer. We never mix vendors just because amounts
+    # happen to sum, so if we can't tie the statement to a vendor we offer no
+    # bulk suggestions at all (the single-match flow still applies).
+    if not top_vendor:
+        return empty
+    vendor_docs = [d for d in open_docs if d.contact_name == top_vendor]
     if len(vendor_docs) < 2:
         return empty
 
@@ -861,6 +895,7 @@ def match_bulk_invoices(
     target = s.received
     allocations: list[dict] = []
     total_allocated = 0.0
+    vendors: set[str] = set()
 
     for inv_id in body.invoice_ids:
         inv = db.get(Invoice, inv_id)
@@ -869,8 +904,17 @@ def match_bulk_invoices(
         outstanding = round(inv.total - inv.paid_amount, 2)
         if outstanding <= 0:
             raise HTTPException(status_code=409, detail=f"Invoice {inv_id} is already fully paid")
+        vendors.add(_vendor_key(inv))
         allocations.append({"id": inv_id, "amount": outstanding})
         total_allocated = round(total_allocated + outstanding, 2)
+
+    # A split payment must settle ONE vendor's invoices — never a mix whose
+    # amounts merely add up to the bank credit.
+    if len(vendors) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail="All invoices in a split must be from the same vendor.",
+        )
 
     if abs(total_allocated - target) > 0.01:
         raise HTTPException(
@@ -925,6 +969,7 @@ def match_bulk_bills(
     target = s.spent
     allocations: list[dict] = []
     total_allocated = 0.0
+    vendors: set[str] = set()
 
     for bill_id in body.bill_ids:
         bill = db.get(Bill, bill_id)
@@ -933,8 +978,17 @@ def match_bulk_bills(
         outstanding = round(bill.total - bill.paid_amount, 2)
         if outstanding <= 0:
             raise HTTPException(status_code=409, detail=f"Bill {bill_id} is already fully paid")
+        vendors.add(_vendor_key(bill))
         allocations.append({"id": bill_id, "amount": outstanding})
         total_allocated = round(total_allocated + outstanding, 2)
+
+    # A split payment must settle ONE vendor's bills — never a mix whose amounts
+    # merely add up to the bank debit.
+    if len(vendors) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail="All bills in a split must be from the same vendor.",
+        )
 
     if abs(total_allocated - target) > 0.01:
         raise HTTPException(
