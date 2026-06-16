@@ -307,6 +307,12 @@ function DuplicatesTab({ pairs }: { pairs: DuplicatePair[] | undefined }) {
       queryClient.invalidateQueries({ queryKey: ['exceptions'] })
       queryClient.invalidateQueries({ queryKey: ['invoices'] })
       queryClient.invalidateQueries({ queryKey: ['bills'] })
+      // The deleted doc is also a Reconcile match candidate — drop it from those
+      // caches so it stops showing as a suggestion there (keyed separately from
+      // ['statement-lines']: each row holds its own ['suggestions', lineId] query).
+      queryClient.invalidateQueries({ queryKey: ['suggestions'] })
+      queryClient.invalidateQueries({ queryKey: ['bulk-suggestions'] })
+      queryClient.invalidateQueries({ queryKey: ['statement-lines'] })
     },
   })
 
