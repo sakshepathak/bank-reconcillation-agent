@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Clock, Plus, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
-import type { ContactDetail, ContactType, DocumentStatus } from '@/types'
+import type { ContactDetail, ContactPaymentTiming, ContactType, DocumentStatus } from '@/types'
 
 const TYPE_VARIANT: Record<ContactType, 'info' | 'success' | 'muted' | 'warning'> = {
   customer: 'info',
@@ -144,6 +144,9 @@ export default function ContactDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Payment behaviour — learned per-vendor payment timing */}
+      <PaymentBehaviourCard contactId={contactId} contactName={contact.full_name} />
 
       {/* Aliases section */}
       <section className="space-y-2">
@@ -332,5 +335,108 @@ function DocList({
         </CardContent>
       </Card>
     </section>
+  )
+}
+
+// ─── Payment behaviour ───────────────────────────────────────────────────────
+// Surfaces the passively-learned per-vendor payment timing (how many days after
+// an invoice this contact typically pays). Read-only; renders its own loading /
+// "still learning" state inline so a missing profile never blanks the page.
+
+function PaymentBehaviourCard({
+  contactId,
+  contactName,
+}: {
+  contactId: number
+  contactName: string
+}) {
+  const { data, isLoading } = useQuery<ContactPaymentTiming>({
+    queryKey: ['contact-payment-timing', contactId],
+    queryFn: () => api.get(`/contacts/${contactId}/payment-timing`).then((r) => r.data),
+    enabled: Number.isFinite(contactId),
+  })
+
+  const learning = !data || data.typical_days === null
+
+  return (
+    <section className="space-y-2">
+      <div>
+        <h2 className="text-sm font-semibold">Payment behaviour</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Learned from past reconciliations — how{' '}
+          <span className="font-medium text-foreground">{contactName}</span> typically pays.
+        </p>
+      </div>
+
+      <Card>
+        <CardContent className="py-4 px-4">
+          {isLoading && <Skeleton className="h-12 w-full" />}
+
+          {!isLoading && learning && (
+            <p className="text-xs text-muted-foreground py-1">
+              Still learning — {data?.observations ?? 0} payment
+              {(data?.observations ?? 0) === 1 ? '' : 's'} seen so far. A few more and a
+              pattern will appear here.
+            </p>
+          )}
+
+          {!isLoading && !learning && data && (
+            <div className="flex items-center justify-between gap-6 flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg bg-muted p-2 flex-shrink-0">
+                  <Clock className="w-4 h-4 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-lg font-bold leading-tight">~{data.typical_days} days</p>
+                  <p className="text-xs text-muted-foreground">
+                    typically pays after invoice · {data.observations} payment
+                    {data.observations === 1 ? '' : 's'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {data.consistency && (
+                  <Badge variant={data.consistency === 'consistent' ? 'success' : 'warning'}>
+                    {data.consistency === 'consistent' ? 'Consistent' : 'Variable'}
+                  </Badge>
+                )}
+                {data.trend && data.trend !== 'steady' && (
+                  <Badge variant="muted">
+                    {data.trend === 'slower' ? 'Trending slower' : 'Trending faster'}
+                  </Badge>
+                )}
+                {data.min_days !== null && data.max_days !== null && (
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    range {data.min_days}–{data.max_days}d
+                  </span>
+                )}
+              </div>
+
+              {data.recent_lags.length > 0 && <SparklineBars lags={data.recent_lags} />}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  )
+}
+
+function SparklineBars({ lags }: { lags: number[] }) {
+  const max = Math.max(1, ...lags)
+  return (
+    <div
+      className="flex items-end gap-1 h-10 flex-shrink-0"
+      title="Recent payment lags (days after invoice)"
+    >
+      {lags.map((lag, i) => (
+        <div
+          key={i}
+          className="w-1.5 rounded-sm bg-primary/70"
+          style={{ height: `${Math.max(8, Math.round((lag / max) * 100))}%` }}
+          title={`${lag}d`}
+        />
+      ))}
+    </div>
   )
 }

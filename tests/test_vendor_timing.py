@@ -11,7 +11,7 @@ import os
 from contextlib import contextmanager
 
 from engine.reconcile_rules import (
-    score_date, DATE_MAX, payment_lag_days, learned_window_days, LEARN_MIN_OBS,
+    score_date, DATE_MAX, payment_lag_days, learned_window_days, timing_stats, LEARN_MIN_OBS,
 )
 
 
@@ -33,6 +33,27 @@ def test_learned_window_needs_enough_observations():
 def test_learned_window_floors_early_payments():
     # Paying early (negative lag) never shrinks the window.
     assert learned_window_days([-3, 0, 1]) == 1
+
+
+# ── Unit: human-facing timing stats (for the Payment-behaviour card) ──────────
+
+def test_timing_stats_too_few_is_all_none():
+    s = timing_stats([40, 50])  # below LEARN_MIN_OBS
+    assert s["sample_size"] == 2
+    assert s["typical_days"] is None and s["consistency"] is None
+
+
+def test_timing_stats_consistent_vendor():
+    s = timing_stats([44, 45, 46, 45])
+    assert s["typical_days"] == 45          # median
+    assert s["min_days"] == 44 and s["max_days"] == 46
+    assert s["consistency"] == "consistent"
+
+
+def test_timing_stats_variable_and_trending_slower():
+    s = timing_stats([20, 25, 30, 80, 85, 90])  # oldest-first; rising over time
+    assert s["consistency"] == "variable"
+    assert s["trend"] == "slower"
 
 
 def test_learned_window_widens_but_never_narrows_score_date():
@@ -189,3 +210,40 @@ def test_unreconcile_unlearns_the_timing(client):
     after = _top(client, _line(client, acc, "LateCo", 100.0, "2026-05-21"))
     assert "usual window" not in after["reason"]
     assert "late" in after["reason"]
+
+
+# ── Integration: the Payment-behaviour endpoint ───────────────────────────────
+
+def _contact_id(client, name):
+    return next(c["id"] for c in client.get("/api/v1/contacts/").json() if c["full_name"] == name)
+
+
+def test_payment_timing_endpoint_summarises_learned_behaviour(client):
+    acc = _setup(client)
+    for i, (issue, due, pay) in enumerate(_LATE_HISTORY):  # three ~50d-late payments
+        inv = _invoice(client, "LateCo", 100.0, f"INV-PT{i}", issue, due=due)
+        _match_invoice(client, _line(client, acc, "LateCo", 100.0, pay), inv)
+
+    cid = _contact_id(client, "LateCo")
+    r = client.get(f"/api/v1/contacts/{cid}/payment-timing")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["observations"] == 3
+    assert body["typical_days"] == 50
+    assert body["recent_lags"] == [50, 50, 50]
+    assert body["consistency"] == "consistent"
+
+
+def test_payment_timing_endpoint_still_learning_with_no_payments(client):
+    _setup(client)
+    _invoice(client, "Fresh Co", 100.0, "INV-F", "2026-01-01", due="2026-01-31")
+    cid = _contact_id(client, "Fresh Co")
+    body = client.get(f"/api/v1/contacts/{cid}/payment-timing").json()
+    assert body["observations"] == 0
+    assert body["typical_days"] is None
+    assert body["recent_lags"] == []
+
+
+def test_payment_timing_endpoint_404_for_unknown_contact(client):
+    _setup(client)
+    assert client.get("/api/v1/contacts/999999/payment-timing").status_code == 404

@@ -1,17 +1,20 @@
+import json
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from memory.models import Bill, Contact, DocumentStatus, Invoice, VendorAlias
+from memory.models import Bill, Contact, DocumentStatus, Invoice, VendorAlias, VendorPaymentProfile
 from api.schemas.models import (
     AliasResponse,
     ContactCreate,
     ContactDetailResponse,
     ContactDocSummary,
+    ContactPaymentTimingResponse,
     ContactResponse,
     ContactUpdate,
 )
 from api.deps import get_db, get_current_org_id
+from engine.reconcile_rules import timing_stats
 
 router = APIRouter(prefix="/contacts", tags=["contacts"])
 
@@ -121,6 +124,54 @@ def get_contact_detail(
             )
             for a in aliases
         ],
+    )
+
+
+@router.get("/{contact_id}/payment-timing", response_model=ContactPaymentTimingResponse)
+def get_payment_timing(
+    contact_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    """
+    Learned payment-timing summary for this contact — how many days after a
+    document's issue date they typically pay, passively learned from past
+    reconciliations (VendorPaymentProfile). Returns a "still learning" shape
+    (typical_days=None) until enough payments are observed.
+    """
+    contact = _load_contact_for_org(db, contact_id, org_id)
+
+    # Profiles are keyed "id:<contact_id>" when documents carried a contact_id
+    # (the common case), else "name:<normalised name>". Prefer the id-key; fall
+    # back to the name-key for history learned before a contact link existed.
+    prof = db.exec(
+        select(VendorPaymentProfile).where(
+            VendorPaymentProfile.org_id == org_id,
+            VendorPaymentProfile.vendor_key == f"id:{contact_id}",
+        )
+    ).first()
+    if prof is None:
+        name_key = f"name:{(contact.full_name or '').strip().lower()}"
+        prof = db.exec(
+            select(VendorPaymentProfile).where(
+                VendorPaymentProfile.org_id == org_id,
+                VendorPaymentProfile.vendor_key == name_key,
+            )
+        ).first()
+
+    try:
+        lags = json.loads(prof.recent_lags or "[]") if prof else []
+        if not isinstance(lags, list):
+            lags = []
+    except (json.JSONDecodeError, TypeError):
+        lags = []
+
+    return ContactPaymentTimingResponse(
+        contact_id=contact_id,
+        observations=(prof.n if prof else 0),
+        recent_lags=[max(0, int(x)) for x in lags if x is not None],
+        updated_at=(prof.updated_at if prof else None),
+        **timing_stats(lags),
     )
 
 

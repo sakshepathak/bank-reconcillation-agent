@@ -170,6 +170,24 @@ class ContactDetailResponse(BaseModel):
     aliases: list[AliasResponse]
 
 
+class ContactPaymentTimingResponse(BaseModel):
+    """Learned payment-timing summary for the Contact 'Payment behaviour' card.
+
+    Central/spread/trend fields are null until enough payments have been observed
+    (the engine needs a few before it trusts a pattern)."""
+    contact_id: int
+    observations: int                      # all-time payments learned for this vendor
+    sample_size: int                       # recent payments the stats are computed over
+    typical_days: Optional[int] = None     # median lag — "typically pays in ~N days"
+    window_days: Optional[int] = None      # the window the matcher credits to (p80)
+    min_days: Optional[int] = None
+    max_days: Optional[int] = None
+    consistency: Optional[str] = None      # "consistent" | "variable"
+    trend: Optional[str] = None            # "steady" | "slower" | "faster"
+    recent_lags: list[int] = []
+    updated_at: Optional[str] = None
+
+
 # ── Bank Accounts ────────────────────────────────────────────────────────────
 
 class BankAccountCreate(BaseModel):

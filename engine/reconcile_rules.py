@@ -130,6 +130,53 @@ def learned_window_days(
     return lags[k]
 
 
+def timing_stats(recent_lags, *, min_obs: int = LEARN_MIN_OBS) -> dict:
+    """
+    Human-facing summary of a vendor's payment timing for the "Payment behaviour"
+    card. Derived purely from the stored recent lags (chronological, oldest first).
+
+    The central/spread/trend fields stay None until >= min_obs payments, so the UI
+    can show a "still learning" state instead of confident nonsense. `typical_days`
+    is the median (the intuitive "typically pays in ~N days"); `window_days` is the
+    p80 window the matcher actually credits to.
+    """
+    lags = [max(0, int(x)) for x in (recent_lags or []) if x is not None]
+    n = len(lags)
+    stats = {
+        "sample_size": n,
+        "typical_days": None,
+        "window_days": None,
+        "min_days": None,
+        "max_days": None,
+        "consistency": None,   # "consistent" | "variable"
+        "trend": None,         # "steady" | "slower" | "faster"
+    }
+    if n < min_obs:
+        return stats
+
+    s = sorted(lags)
+    median = s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+    stats["typical_days"] = int(round(median))
+    stats["window_days"] = learned_window_days(lags, min_obs=min_obs)
+    stats["min_days"], stats["max_days"] = s[0], s[-1]
+
+    # Consistent if the spread is tight relative to the typical lag.
+    spread = s[-1] - s[0]
+    stats["consistency"] = "consistent" if spread <= max(7, 0.5 * median) else "variable"
+
+    # Trend: most-recent third vs earliest third (lags are oldest-first).
+    k = max(1, n // 3)
+    early = sum(lags[:k]) / k
+    late = sum(lags[-k:]) / k
+    if late - early >= 5:
+        stats["trend"] = "slower"
+    elif early - late >= 5:
+        stats["trend"] = "faster"
+    else:
+        stats["trend"] = "steady"
+    return stats
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Name similarity gates the confidence LABEL
 # ════════════════════════════════════════════════════════════════════════════

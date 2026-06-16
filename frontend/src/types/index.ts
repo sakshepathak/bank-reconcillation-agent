@@ -91,6 +91,20 @@ export interface ContactDetail {
   aliases: VendorAlias[]
 }
 
+export interface ContactPaymentTiming {
+  contact_id: number
+  observations: number
+  sample_size: number
+  typical_days: number | null
+  window_days: number | null
+  min_days: number | null
+  max_days: number | null
+  consistency: 'consistent' | 'variable' | null
+  trend: 'steady' | 'slower' | 'faster' | null
+  recent_lags: number[]
+  updated_at: string | null
+}
+
 export type DocumentStatus =
   | 'draft'
   | 'awaiting_approval'
