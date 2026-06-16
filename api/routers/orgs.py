@@ -31,6 +31,7 @@ from memory.models import (
     Organization, User, UserOrgMembership, UserSession,
     # Org-scoped business tables wiped on org deletion:
     StatementLine, MatchRecord, AuditLog, InvoiceLine, BillLine, VendorAlias,
+    VendorPaymentProfile,
     Invoice, Bill, JournalEntry, ServiceOffered, BankAccount, Contact,
     ManualLedgerEntry, ExtractedInvoice, CompanyProfile,
 )
@@ -51,6 +52,7 @@ _ORG_SCOPED_MODELS = [
     InvoiceLine,        # references invoice, service_offered
     BillLine,           # references bill
     VendorAlias,        # references contact
+    VendorPaymentProfile,  # learned per-vendor payment timing
     Invoice,            # references contact
     Bill,               # references contact
     JournalEntry,       # references contact

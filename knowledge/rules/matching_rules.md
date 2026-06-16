@@ -50,6 +50,13 @@ never penalised.
   - **Paid long after the due date** → a mild reduction only (late payments are real),
     never a hard zero until the gap is implausibly large (> ~1 year).
 
+**Learned per-vendor timing.** The engine passively learns each vendor's typical
+payment window from your own reconciliations — if you habitually pay a vendor ~50
+days out, payments around that point earn full date credit instead of a late
+penalty. It only ever *widens* a vendor's window (never narrows it), needs several
+consistent payments before it takes effect, and never overrides the
+paid-before-the-invoice red flag. This is the date-side twin of learned aliases.
+
 ## Name similarity caps the confidence label
 
 A matching amount and date are **not enough on their own** — the vendor name has
@@ -107,8 +114,5 @@ that lands in a different period. All unmatched lines require human review.
 
 ## Roadmap (not yet active)
 
-- **Learned per-vendor payment timing** — if you regularly pay a vendor late, the
-  engine will learn that vendor's typical window so their habitual late payments
-  stop being marked down. (Date-side twin of learned aliases.)
 - **Reference-number lock** — when an invoice/bill number appears in the bank text,
   treat it as a certain vendor identity.

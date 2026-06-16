@@ -41,13 +41,17 @@ def _parse(value) -> Optional[date]:
         return None
 
 
-def score_date(payment_date, issue_date, due_date=None) -> tuple[float, str]:
+def score_date(payment_date, issue_date, due_date=None, learned_window=None) -> tuple[float, str]:
     """
     Score a payment date against the document it might settle.
 
     Returns (component in 0..DATE_MAX, short human reason). `delta` is the number
     of days the payment falls AFTER the issue date — negative means the payment
     predates the document.
+
+    `learned_window`, when given, is this vendor's learned typical payment window
+    in days (see learned_window_days()); it can only WIDEN the full-credit window,
+    never narrow it, so a habitually-late vendor stops being marked down.
     """
     pay = _parse(payment_date)
     iss = _parse(issue_date)
@@ -68,15 +72,62 @@ def score_date(payment_date, issue_date, due_date=None) -> tuple[float, str]:
     terms = (due - iss).days if (due is not None and (due - iss).days >= 0) else _DEFAULT_TERMS_DAYS
     within = terms + _GRACE_DAYS
 
-    if delta <= within:
+    # A vendor's learned typical window can only EXTEND full credit, never shrink it.
+    within_eff = max(within, learned_window) if learned_window is not None else within
+    learned_extends = learned_window is not None and learned_window > within
+
+    if delta <= within_eff:
         if delta == 0:
             return DATE_MAX, "same day"
+        if learned_extends and delta > within:
+            return DATE_MAX, f"{delta}d after — vendor's usual window"
         return DATE_MAX, f"{delta}d after — within terms"
-    if delta <= within + _LATE_TAPER_DAYS:
+    if delta <= within_eff + _LATE_TAPER_DAYS:
         return 0.10, f"{delta}d after — late"
     if delta <= 365:
         return 0.05, f"{delta}d after"
     return 0.0, f"{delta}d apart — far"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Learned per-vendor payment timing  (the date-side twin of learned aliases)
+# ════════════════════════════════════════════════════════════════════════════
+# We passively record how many days after a document's issue date each vendor's
+# payments actually land; once enough consistent observations accrue,
+# `learned_window_days` reports that vendor's typical window so `score_date` can
+# widen full date credit for them. The maths here stay pure — storage + the
+# upsert live in the API (statement_lines).
+
+LEARN_MIN_OBS = 3       # need this many payments before we trust a pattern
+LEARN_PERCENTILE = 0.8  # window covers ~80% of this vendor's observed payments
+LEARN_HISTORY = 12      # keep only the most recent N lags per vendor
+
+
+def payment_lag_days(payment_date, issue_date) -> Optional[int]:
+    """Days from issue to payment (negative = paid before issue). None if unparseable."""
+    pay = _parse(payment_date)
+    iss = _parse(issue_date)
+    if pay is None or iss is None:
+        return None
+    return (pay - iss).days
+
+
+def learned_window_days(
+    recent_lags, *, min_obs: int = LEARN_MIN_OBS, percentile: float = LEARN_PERCENTILE
+) -> Optional[int]:
+    """
+    This vendor's typical payment window: a high percentile of their recent
+    payment lags (days from issue to payment). Returns None until at least
+    `min_obs` payments are observed, so one stray late payment can't move it.
+    Early payments (negative lag) are floored at 0 — paying early never shrinks
+    the window. Feed the result to `score_date(..., learned_window=...)`.
+    """
+    lags = sorted(max(0, int(x)) for x in (recent_lags or []) if x is not None)
+    if len(lags) < min_obs:
+        return None
+    # nearest-rank percentile over the sorted lags
+    k = max(0, min(len(lags) - 1, int(round(percentile * (len(lags) - 1)))))
+    return lags[k]
 
 
 # ════════════════════════════════════════════════════════════════════════════

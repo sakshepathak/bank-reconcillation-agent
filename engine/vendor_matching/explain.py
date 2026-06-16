@@ -59,6 +59,7 @@ def explain_candidate(
     cand_date: str,
     cand_due_date: Optional[str] = None,
     same_currency: bool = True,
+    learned_window: Optional[int] = None,
     alias_map: Optional[dict[str, str]] = None,
 ) -> dict:
     """
@@ -107,8 +108,11 @@ def explain_candidate(
     else:
         amount_component, amount_reason = 0.0, f"amount differs by {amount_diff:.2f}"
 
-    # Asymmetric, terms-aware date rule (shared with /suggestions via reconcile_rules).
-    date_component, date_reason = score_date(bank_date, cand_date, cand_due_date)
+    # Asymmetric, terms-aware date rule (shared with /suggestions via reconcile_rules),
+    # widened by this vendor's learned payment window when one has been trained.
+    date_component, date_reason = score_date(
+        bank_date, cand_date, cand_due_date, learned_window=learned_window
+    )
     dd = _date_diff_days(bank_date, cand_date)
 
     name_component = round(name_raw * 0.3, 4)

@@ -22,7 +22,7 @@ from sqlmodel import Session, select
 from memory.models import (
     BankAccount, StatementLine, StatementLineStatus,
     Invoice, Bill, JournalEntry, DocumentStatus, VendorAlias, Organization,
-    AuditLog, AuditAction, User,
+    AuditLog, AuditAction, User, VendorPaymentProfile,
 )
 
 # Countries that write dates month-first (MM/DD/YYYY). Used only to break
@@ -42,6 +42,7 @@ from engine.vendor_matching.normalizer import canonicalize
 from engine.vendor_matching.explain import explain_candidate
 from engine.reconcile_rules import (
     score_date, cap_by_name, auto_match_ready, is_ambiguous, BAND_LIKELY, AMBIGUITY_EPS,
+    learned_window_days, payment_lag_days, LEARN_HISTORY,
 )
 from engine.llm.factory import get_llm
 from engine.llm.base import LLMError
@@ -199,6 +200,81 @@ def _maybe_learn_alias(
         created_at=_now(),
     ))
     return True
+
+
+def _vendor_key_parts(contact_id, contact_name) -> str:
+    """Stable 'same vendor' identity: contact_id when present, else the normalised
+    name. Shared by split-payment checks and the learned payment-timing profile."""
+    if contact_id:
+        return f"id:{contact_id}"
+    return f"name:{(contact_name or '').strip().lower()}"
+
+
+def _record_payment_timing(
+    db: Session, org_id: int, vendor_key: str, lag_days: int | None
+) -> None:
+    """
+    Passive learning: note how many days after a document's issue date this vendor
+    was actually paid, so the date rule can widen their fair-payment window over
+    time (see engine/reconcile_rules.learned_window_days). Keeps only the most
+    recent LEARN_HISTORY lags. Added to the caller's transaction so it commits
+    atomically with the reconcile action. No-op on an unparseable lag.
+    """
+    if lag_days is None or not vendor_key:
+        return
+    prof = db.exec(
+        select(VendorPaymentProfile).where(
+            VendorPaymentProfile.org_id == org_id,
+            VendorPaymentProfile.vendor_key == vendor_key,
+        )
+    ).first()
+    if prof is None:
+        prof = VendorPaymentProfile(org_id=org_id, vendor_key=vendor_key, n=0, recent_lags="[]")
+    try:
+        lags = json.loads(prof.recent_lags or "[]")
+        if not isinstance(lags, list):
+            lags = []
+    except (json.JSONDecodeError, TypeError):
+        lags = []
+    lags.append(int(lag_days))
+    prof.recent_lags = json.dumps(lags[-LEARN_HISTORY:])
+    prof.n = (prof.n or 0) + 1
+    prof.updated_at = _now()
+    db.add(prof)
+
+
+def _unrecord_payment_timing(
+    db: Session, org_id: int, vendor_key: str, lag_days: int | None
+) -> None:
+    """
+    Inverse of _record_payment_timing — used when a match is undone (unreconcile),
+    so an undone (possibly mistaken) match stops teaching the date rule. Removes
+    one occurrence of this match's lag from the vendor's recent history (if it's
+    still inside the rolling window) and decrements the count. No-op if there's no
+    profile or the lag has already rolled out of the window.
+    """
+    if lag_days is None or not vendor_key:
+        return
+    prof = db.exec(
+        select(VendorPaymentProfile).where(
+            VendorPaymentProfile.org_id == org_id,
+            VendorPaymentProfile.vendor_key == vendor_key,
+        )
+    ).first()
+    if prof is None:
+        return
+    try:
+        lags = json.loads(prof.recent_lags or "[]")
+        if not isinstance(lags, list):
+            lags = []
+    except (json.JSONDecodeError, TypeError):
+        lags = []
+    if int(lag_days) in lags:
+        lags.remove(int(lag_days))
+    prof.recent_lags = json.dumps(lags)
+    prof.n = max(0, (prof.n or 0) - 1)
+    prof.updated_at = _now()
+    db.add(prof)
 
 
 # ── List / read ──────────────────────────────────────────────────────────────
@@ -409,10 +485,10 @@ def get_suggestions(
                 Invoice.status != DocumentStatus.VOIDED,
             )
         ).all()
-        # (id, label, contact, date, outstanding, currency, due_date)
+        # (id, label, contact, date, outstanding, currency, due_date, contact_id)
         cands = [
             (d.id, d.number, d.contact_name, d.issue_date,
-             round(d.total - d.paid_amount, 2), d.currency, d.due_date)
+             round(d.total - d.paid_amount, 2), d.currency, d.due_date, d.contact_id)
             for d in docs if (d.total - d.paid_amount) > 0
         ]
         cand_type = "invoice"
@@ -426,7 +502,7 @@ def get_suggestions(
         ).all()
         cands = [
             (d.id, d.number or f"Bill #{d.id}", d.contact_name, d.issue_date,
-             round(d.total - d.paid_amount, 2), d.currency, d.due_date)
+             round(d.total - d.paid_amount, 2), d.currency, d.due_date, d.contact_id)
             for d in docs if (d.total - d.paid_amount) > 0
         ]
         cand_type = "bill"
@@ -437,6 +513,17 @@ def get_suggestions(
     # Currency the line is denominated in (StatementLine inherits its bank account's).
     acc = db.get(BankAccount, s.bank_account_id)
     line_currency = acc.currency if acc else "GBP"
+
+    # Learned per-vendor payment timing — widens a habitually-late vendor's date window.
+    timing_rows = db.exec(
+        select(VendorPaymentProfile).where(VendorPaymentProfile.org_id == org_id)
+    ).all()
+    timing_map: dict[str, list] = {}
+    for _p in timing_rows:
+        try:
+            timing_map[_p.vendor_key] = json.loads(_p.recent_lags or "[]")
+        except (json.JSONDecodeError, TypeError):
+            timing_map[_p.vendor_key] = []
 
     # ── Name match via the real vendor matcher (alias + canonical + fuzzy + embed) ──
     alias_rows = db.exec(select(VendorAlias).where(VendorAlias.org_id == org_id)).all()
@@ -458,7 +545,7 @@ def get_suggestions(
 
     # ── Score every candidate ───────────────────────────────────────────────
     out: list[dict] = []
-    for idx, (cid, label, contact, doc_date, outstanding, currency, due_date) in enumerate(cands):
+    for idx, (cid, label, contact, doc_date, outstanding, currency, due_date, contact_id) in enumerate(cands):
         reasons: list[str] = []
 
         # Amount component (0–0.5)
@@ -476,9 +563,10 @@ def get_suggestions(
             amount_score = 0.0
             reasons.append(f"amount differs by {diff:.2f}")
 
-        # Date component (0–0.2) — asymmetric: don't punish a normal payment delay
-        # after the invoice; treat a payment dated BEFORE it as a red flag.
-        date_score, date_reason = score_date(s.date, doc_date, due_date)
+        # Date component (0–0.2) — asymmetric, and widened by this vendor's learned
+        # payment window; a payment dated BEFORE the document stays a red flag.
+        lw = learned_window_days(timing_map.get(_vendor_key_parts(contact_id, contact), []))
+        date_score, date_reason = score_date(s.date, doc_date, due_date, learned_window=lw)
         reasons.append(date_reason)
 
         # Name component (0–0.3) via the proper matcher
@@ -587,6 +675,20 @@ def explain_suggestion(
     alias_rows = db.exec(select(VendorAlias).where(VendorAlias.org_id == org_id)).all()
     alias_map = {a.alias.lower(): a.canonical_name for a in alias_rows}
 
+    # This vendor's learned payment window (None until enough payments are seen).
+    prof = db.exec(
+        select(VendorPaymentProfile).where(
+            VendorPaymentProfile.org_id == org_id,
+            VendorPaymentProfile.vendor_key == _vendor_key(doc),
+        )
+    ).first()
+    lw = None
+    if prof is not None:
+        try:
+            lw = learned_window_days(json.loads(prof.recent_lags or "[]"))
+        except (json.JSONDecodeError, TypeError):
+            lw = None
+
     trace = explain_candidate(
         bank_desc=s.description or "",
         bank_amount=bank_amount,
@@ -597,6 +699,7 @@ def explain_suggestion(
         cand_date=doc.issue_date,
         cand_due_date=doc.due_date,
         same_currency=(doc.currency == line_currency),
+        learned_window=lw,
         alias_map=alias_map,
     )
     trace["candidate"] = {"type": doc_type, "id": doc_id}
@@ -759,12 +862,9 @@ async def upload_statement(
 # ── Bulk-match helpers ───────────────────────────────────────────────────────
 
 def _vendor_key(doc) -> str:
-    """Stable identity for 'same vendor' checks — contact_id when present, else
-    the normalised contact name. Used to enforce single-vendor split payments."""
-    cid = getattr(doc, "contact_id", None)
-    if cid:
-        return f"id:{cid}"
-    return f"name:{(getattr(doc, 'contact_name', '') or '').strip().lower()}"
+    """Stable identity for 'same vendor' checks — see _vendor_key_parts. Used to
+    enforce single-vendor split payments."""
+    return _vendor_key_parts(getattr(doc, "contact_id", None), getattr(doc, "contact_name", ""))
 
 
 def _find_bulk_combinations(
@@ -972,6 +1072,8 @@ def match_bulk_invoices(
             inv.status = DocumentStatus.PAID
         inv.updated_at = now
         db.add(inv)
+        # Each settled invoice is one observation of this vendor's payment timing.
+        _record_payment_timing(db, org_id, _vendor_key(inv), payment_lag_days(s.date, inv.issue_date))
 
     s.matched_invoice_ids = json.dumps(allocations)
     s.status = StatementLineStatus.MATCHED
@@ -1046,6 +1148,8 @@ def match_bulk_bills(
             bill.status = DocumentStatus.PAID
         bill.updated_at = now
         db.add(bill)
+        # Each settled bill is one observation of this vendor's payment timing.
+        _record_payment_timing(db, org_id, _vendor_key(bill), payment_lag_days(s.date, bill.issue_date))
 
     s.matched_bill_ids = json.dumps(allocations)
     s.status = StatementLineStatus.MATCHED
@@ -1095,6 +1199,9 @@ def match_invoice(
 
     if body.learn_alias:
         _maybe_learn_alias(db, org_id, s, inv.contact_name, inv.contact_id)
+    _record_payment_timing(
+        db, org_id, _vendor_key(inv), payment_lag_days(s.date, inv.issue_date)
+    )
 
     _log_audit(
         db, org_id=org_id, actor=user, action=AuditAction.MATCH_INVOICE, line=s,
@@ -1140,6 +1247,9 @@ def match_bill(
 
     if body.learn_alias:
         _maybe_learn_alias(db, org_id, s, bill.contact_name, bill.contact_id)
+    _record_payment_timing(
+        db, org_id, _vendor_key(bill), payment_lag_days(s.date, bill.issue_date)
+    )
 
     _log_audit(
         db, org_id=org_id, actor=user, action=AuditAction.MATCH_BILL, line=s,
@@ -1285,6 +1395,7 @@ def unreconcile(
                     inv.status = DocumentStatus.AWAITING_PAYMENT
                 inv.updated_at = _now()
                 db.add(inv)
+                _unrecord_payment_timing(db, org_id, _vendor_key(inv), payment_lag_days(s.date, inv.issue_date))
         _apply_balance(db, s.bank_account_id, -amount, org_id)
 
     elif bulk_bill_raw:
@@ -1301,6 +1412,7 @@ def unreconcile(
                     bill.status = DocumentStatus.AWAITING_PAYMENT
                 bill.updated_at = _now()
                 db.add(bill)
+                _unrecord_payment_timing(db, org_id, _vendor_key(bill), payment_lag_days(s.date, bill.issue_date))
         _apply_balance(db, s.bank_account_id, -amount, org_id)
 
     elif s.matched_invoice_id:
@@ -1311,6 +1423,7 @@ def unreconcile(
                 inv.status = DocumentStatus.AWAITING_PAYMENT
             inv.updated_at = _now()
             db.add(inv)
+            _unrecord_payment_timing(db, org_id, _vendor_key(inv), payment_lag_days(s.date, inv.issue_date))
         _apply_balance(db, s.bank_account_id, -amount, org_id)
 
     elif s.matched_bill_id:
@@ -1321,6 +1434,7 @@ def unreconcile(
                 bill.status = DocumentStatus.AWAITING_PAYMENT
             bill.updated_at = _now()
             db.add(bill)
+            _unrecord_payment_timing(db, org_id, _vendor_key(bill), payment_lag_days(s.date, bill.issue_date))
         _apply_balance(db, s.bank_account_id, -amount, org_id)
 
     elif s.matched_journal_id:

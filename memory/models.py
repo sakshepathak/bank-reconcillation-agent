@@ -57,6 +57,28 @@ class VendorAlias(SQLModel, table=True):
     created_at: str = Field(default="")      # ISO datetime string
 
 
+class VendorPaymentProfile(SQLModel, table=True):
+    """
+    Learned per-vendor payment timing — the date-side twin of VendorAlias.
+
+    Passively records how many days after a document's issue date this vendor's
+    payments actually land. Once enough consistent observations accrue, the date
+    rule widens this vendor's "fair payment window" so their habitual late
+    payments stop being marked down (see engine/reconcile_rules.learned_window_days).
+    One row per (org, vendor); `vendor_key` matches statement_lines._vendor_key
+    (contact_id when present, else the normalised contact name).
+    """
+
+    __tablename__ = "vendor_payment_profile"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: Optional[int] = Field(default=None, foreign_key="organization.id", index=True)
+    vendor_key: str = Field(index=True)      # "id:<contact_id>" or "name:<normalised>"
+    n: int = Field(default=0)                 # total observations ever seen
+    recent_lags: str = Field(default="")      # JSON list[int]: recent (payment − issue) day-lags
+    updated_at: str = Field(default="")       # ISO datetime string
+
+
 class MatchRecord(SQLModel, table=True):
     """
     Immutable audit log of every reconciliation decision made by the agent.
