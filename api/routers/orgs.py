@@ -34,6 +34,7 @@ from memory.models import (
     VendorPaymentProfile,
     Invoice, Bill, JournalEntry, ServiceOffered, BankAccount, Contact,
     ManualLedgerEntry, ExtractedInvoice, CompanyProfile,
+    CreditNote, CreditAllocation,
 )
 from api.deps import get_db, get_current_org_id, get_optional_session, require_user
 
@@ -46,7 +47,9 @@ router = APIRouter(prefix="/orgs", tags=["orgs"])
 # Contact). Every table carries org_id (backfilled by migration 001), so each
 # is a flat `DELETE ... WHERE org_id = ?` — no joins needed.
 _ORG_SCOPED_MODELS = [
-    StatementLine,      # references invoice/bill/journal/bank_account
+    StatementLine,      # references invoice/bill/journal/bank_account/credit_note
+    CreditAllocation,   # references credit_note (+ loose bill/invoice ids)
+    CreditNote,         # references contact, statement_line
     MatchRecord,
     AuditLog,           # append-only reconciliation history
     InvoiceLine,        # references invoice, service_offered
