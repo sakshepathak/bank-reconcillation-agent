@@ -23,6 +23,7 @@ from memory.models import (
     BankAccount, StatementLine, StatementLineStatus,
     Invoice, Bill, JournalEntry, DocumentStatus, VendorAlias, Organization,
     AuditLog, AuditAction, User, VendorPaymentProfile,
+    Contact, CreditNote, CreditKind, CreditDirection,
 )
 
 # Countries that write dates month-first (MM/DD/YYYY). Used only to break
@@ -34,6 +35,7 @@ from api.schemas.models import (
     TransferRequest, DiscussRequest,
     MatchBulkInvoicesRequest, MatchBulkBillsRequest,
     BulkMatchSuggestionsResponse, BulkMatchOpenDoc,
+    ReconciledLineResponse, UnreconcileResult, BookCreditRequest,
 )
 from api.deps import get_db, get_current_org_id, require_user
 from engine.bank_statement_parser import parse_bank_statement
@@ -80,6 +82,7 @@ def _to_resp(s: StatementLine) -> StatementLineResponse:
         transfer_to_account_id=s.transfer_to_account_id,
         matched_invoice_ids=_parse_json_field(getattr(s, "matched_invoice_ids", None)),
         matched_bill_ids=_parse_json_field(getattr(s, "matched_bill_ids", None)),
+        matched_credit_id=getattr(s, "matched_credit_id", None),
         discussion=s.discussion, suggested_score=s.suggested_score,
         imported_at=s.imported_at, reconciled_at=s.reconciled_at,
     )
@@ -167,7 +170,7 @@ def _maybe_learn_alias(
     line: StatementLine,
     canonical_name: str | None,
     contact_id: int | None = None,
-) -> bool:
+) -> int | None:
     """
     Self-learning: when the user approves a match, optionally remember this bank
     description → vendor so the engine matches it automatically next time.
@@ -176,21 +179,22 @@ def _maybe_learn_alias(
     so it survives varying transaction-id/reference noise on future statements.
     No-op when the description or vendor is blank, or when an equivalent alias
     already exists (we never duplicate). Added to the caller's transaction so it
-    commits atomically with the reconcile action. Returns True if one was created.
+    commits atomically with the reconcile action. Returns the new alias's id (so
+    unreconcile can delete exactly it), or None when nothing was created.
     """
     desc = (line.description or "").strip()
     vendor = (canonical_name or "").strip()
     if not desc or not vendor:
-        return False
+        return None
     key = (canonicalize(desc).canonical or desc).strip().lower()
     if not key:
-        return False
+        return None
     existing = db.exec(
         select(VendorAlias).where(VendorAlias.org_id == org_id, VendorAlias.alias == key)
     ).first()
     if existing is not None:
-        return False  # already learned — don't pile on duplicates
-    db.add(VendorAlias(
+        return None  # already learned — don't pile on duplicates
+    alias = VendorAlias(
         org_id=org_id,
         alias=key,
         canonical_name=vendor,
@@ -198,8 +202,10 @@ def _maybe_learn_alias(
         confidence=1.0,
         source="human",
         created_at=_now(),
-    ))
-    return True
+    )
+    db.add(alias)
+    db.flush()  # populate alias.id within the caller's transaction
+    return alias.id
 
 
 def _vendor_key_parts(contact_id, contact_name) -> str:
@@ -406,6 +412,87 @@ def pipeline_lines(
         }
         for s in db.exec(q).all()
     ]
+
+
+# ── Reconciled lines (the "Reconciled" tab) ──────────────────────────────────
+
+def _reconciled_target(db: Session, s: StatementLine) -> tuple[str, str]:
+    """(kind, label) describing what a reconciled line was reconciled to."""
+    # A booked credit (overpayment/prepayment) takes priority over any documents
+    # it also settled, so the Reconciled tab reads "Overpayment · Acme" not "split".
+    if getattr(s, "matched_credit_id", None):
+        cn = db.get(CreditNote, s.matched_credit_id)
+        if cn:
+            return "credit", f"{cn.kind.value.capitalize()} · {cn.contact_name}"
+        return "credit", "Credit booked"
+    bulk_inv = getattr(s, "matched_invoice_ids", None)
+    bulk_bill = getattr(s, "matched_bill_ids", None)
+    if bulk_inv:
+        try:
+            n = len(json.loads(bulk_inv))
+        except (json.JSONDecodeError, TypeError):
+            n = 0
+        return "split", f"Split across {n} invoice{'s' if n != 1 else ''}"
+    if bulk_bill:
+        try:
+            n = len(json.loads(bulk_bill))
+        except (json.JSONDecodeError, TypeError):
+            n = 0
+        return "split", f"Split across {n} bill{'s' if n != 1 else ''}"
+    if s.matched_invoice_id:
+        inv = db.get(Invoice, s.matched_invoice_id)
+        return "invoice", (f"{inv.number} · {inv.contact_name}" if inv else f"Invoice #{s.matched_invoice_id}")
+    if s.matched_bill_id:
+        bill = db.get(Bill, s.matched_bill_id)
+        return "bill", (f"{bill.number or f'Bill #{bill.id}'} · {bill.contact_name}" if bill else f"Bill #{s.matched_bill_id}")
+    if s.matched_journal_id:
+        j = db.get(JournalEntry, s.matched_journal_id)
+        return "journal", (f"Journal · {j.contact_name or j.description or 'entry'}" if j else "Journal entry")
+    if s.transfer_to_account_id:
+        acc = db.get(BankAccount, s.transfer_to_account_id)
+        return "transfer", (f"Transfer → {acc.name}" if acc else "Transfer")
+    return "other", "Reconciled"
+
+
+@router.get("/reconciled", response_model=list[ReconciledLineResponse])
+def list_reconciled(
+    bank_account_id: int | None = None,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+) -> list[ReconciledLineResponse]:
+    """
+    Reconciled statement lines (matched / manual / transfer / split) for the
+    Reconcile screen's "Reconciled" tab — each with a resolved label of what it
+    was reconciled to and its id (to unreconcile). Excludes still-pending and
+    discussion-only lines.
+
+    NOTE: declared BEFORE "/{line_id}" so the literal path isn't parsed as an int.
+    """
+    q = select(StatementLine).where(
+        StatementLine.org_id == org_id,
+        StatementLine.status != StatementLineStatus.PENDING,
+        StatementLine.status != StatementLineStatus.DISCUSSED,
+    )
+    if bank_account_id is not None:
+        q = q.where(StatementLine.bank_account_id == bank_account_id)
+    q = q.order_by(StatementLine.reconciled_at.desc())
+
+    out: list[ReconciledLineResponse] = []
+    for s in db.exec(q).all():
+        is_in = s.received > 0
+        kind, label = _reconciled_target(db, s)
+        out.append(ReconciledLineResponse(
+            id=s.id,
+            date=s.date,
+            description=s.description,
+            amount=(s.received if is_in else s.spent),
+            direction=("in" if is_in else "out"),
+            status=s.status.value if hasattr(s.status, "value") else str(s.status),
+            target_kind=kind,
+            target_label=label,
+            reconciled_at=s.reconciled_at,
+        ))
+    return out
 
 
 @router.get("/{line_id}", response_model=StatementLineResponse)
@@ -1198,7 +1285,7 @@ def match_invoice(
     _apply_balance(db, s.bank_account_id, amount, org_id)
 
     if body.learn_alias:
-        _maybe_learn_alias(db, org_id, s, inv.contact_name, inv.contact_id)
+        s.learned_alias_id = _maybe_learn_alias(db, org_id, s, inv.contact_name, inv.contact_id)
     _record_payment_timing(
         db, org_id, _vendor_key(inv), payment_lag_days(s.date, inv.issue_date)
     )
@@ -1246,7 +1333,7 @@ def match_bill(
     _apply_balance(db, s.bank_account_id, amount, org_id)
 
     if body.learn_alias:
-        _maybe_learn_alias(db, org_id, s, bill.contact_name, bill.contact_id)
+        s.learned_alias_id = _maybe_learn_alias(db, org_id, s, bill.contact_name, bill.contact_id)
     _record_payment_timing(
         db, org_id, _vendor_key(bill), payment_lag_days(s.date, bill.issue_date)
     )
@@ -1260,6 +1347,153 @@ def match_bill(
     )
 
     db.add(s); db.add(bill)
+    db.commit()
+    db.refresh(s)
+    return _to_resp(s)
+
+
+@router.post("/{line_id}/book-credit", response_model=StatementLineResponse)
+def book_credit(
+    line_id: int,
+    body: BookCreditRequest,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
+):
+    """
+    Book an overpayment or prepayment from a bank line during reconciliation.
+
+      • Overpayment — the line settles the given bill(s)/invoice(s) IN FULL and the
+        remainder becomes a credit against that same contact.
+      • Prepayment  — there is no document yet; the whole line becomes a credit
+        against the chosen contact.
+
+    The credit is a contra AP/AR balance (a CreditNote) consumed later by allocating
+    it to a future bill/invoice. The FULL line amount moves the bank balance here
+    (the whole payment cleared the bank); the credit itself moves no money until it
+    is allocated. Reconciling the line to MATCHED also prevents a double-click from
+    booking a second credit — a repeat call hits the "already reconciled" guard.
+    """
+    s = _load_line_for_org(db, line_id, org_id)
+    _require_pending(s)
+
+    kind = (body.kind or "").strip().lower()
+    if kind not in (CreditKind.OVERPAYMENT.value, CreditKind.PREPAYMENT.value):
+        raise HTTPException(status_code=422, detail="kind must be 'overpayment' or 'prepayment'")
+
+    # Direction comes from the bank line itself (Xero's Spent-as / Received-as):
+    # money out → a supplier (payable) credit; money in → a customer (receivable) credit.
+    is_out = s.spent > 0
+    is_in = s.received > 0
+    if is_out == is_in:
+        raise HTTPException(status_code=422, detail="Line must be a single spend or receipt to book a credit")
+    direction = CreditDirection.PAYABLE if is_out else CreditDirection.RECEIVABLE
+    line_amount = round(s.spent if is_out else s.received, 2)
+
+    acc = db.get(BankAccount, s.bank_account_id)
+    currency = acc.currency if acc else "GBP"
+    now = _now()
+
+    settled: list[dict] = []
+    contact_id = body.contact_id
+    contact_name = (body.contact_name or "").strip()
+    Model = Bill if is_out else Invoice
+
+    if kind == CreditKind.OVERPAYMENT.value:
+        if not body.document_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="An overpayment must settle at least one bill/invoice; with no document, book a prepayment",
+            )
+        vendors: set[str] = set()
+        settled_total = 0.0
+        for doc_id in body.document_ids:
+            doc = db.get(Model, doc_id)
+            if not doc or doc.org_id != org_id:
+                raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+            outstanding = round(doc.total - doc.paid_amount, 2)
+            if outstanding <= 0:
+                raise HTTPException(status_code=409, detail=f"Document {doc_id} is already fully paid")
+            vendors.add(_vendor_key(doc))
+            settled.append({"id": doc_id, "amount": outstanding})
+            settled_total = round(settled_total + outstanding, 2)
+        if len(vendors) > 1:
+            raise HTTPException(status_code=422, detail="All documents in an overpayment must be the same contact")
+        credit_amount = round(line_amount - settled_total, 2)
+        if credit_amount <= 0.005:
+            raise HTTPException(
+                status_code=422,
+                detail=f"No overpayment: the document(s) ({settled_total:.2f}) are not less than the payment "
+                       f"({line_amount:.2f}). Use a normal or split match instead.",
+            )
+        first_doc = db.get(Model, settled[0]["id"])
+        contact_id = first_doc.contact_id
+        contact_name = first_doc.contact_name
+    else:  # prepayment
+        if body.document_ids:
+            raise HTTPException(status_code=422, detail="A prepayment cannot settle a document; omit document_ids")
+        if not contact_id and not contact_name:
+            raise HTTPException(status_code=422, detail="A prepayment needs a contact")
+        if contact_id and not contact_name:
+            c = db.get(Contact, contact_id)
+            if c and c.org_id == org_id:
+                contact_name = c.full_name
+        credit_amount = line_amount
+
+    credit = CreditNote(
+        org_id=org_id,
+        contact_id=contact_id,
+        contact_name=contact_name or "—",
+        direction=direction,
+        kind=CreditKind(kind),
+        issue_date=s.date,
+        currency=currency,
+        original_amount=credit_amount,
+        allocated_amount=0.0,
+        status=DocumentStatus.AWAITING_PAYMENT,
+        source_statement_line_id=s.id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(credit)
+    db.flush()  # populate credit.id within this transaction
+
+    # Settle the overpaid document(s) in full (reusing the bulk-match JSON shape so
+    # unreconcile's existing reversal loop undoes them).
+    if settled:
+        for alloc in settled:
+            doc = db.get(Model, alloc["id"])
+            doc.paid_amount = round(doc.paid_amount + alloc["amount"], 2)
+            if doc.paid_amount >= doc.total - 0.005:
+                doc.status = DocumentStatus.PAID
+            doc.updated_at = now
+            db.add(doc)
+            _record_payment_timing(db, org_id, _vendor_key(doc), payment_lag_days(s.date, doc.issue_date))
+        if is_out:
+            s.matched_bill_ids = json.dumps(settled)
+        else:
+            s.matched_invoice_ids = json.dumps(settled)
+
+    s.matched_credit_id = credit.id
+    s.status = StatementLineStatus.MATCHED
+    s.reconciled_at = now
+    _apply_balance(db, s.bank_account_id, _net_amount(s), org_id)
+
+    if body.learn_alias:
+        s.learned_alias_id = _maybe_learn_alias(db, org_id, s, contact_name, contact_id)
+
+    action = (AuditAction.BOOK_OVERPAYMENT if kind == CreditKind.OVERPAYMENT.value
+              else AuditAction.BOOK_PREPAYMENT)
+    detail = (f"Booked {kind} of {credit_amount:.2f} {currency} for {contact_name or '—'}"
+              + (f"; settled {len(settled)} document(s)" if settled else ""))
+    _log_audit(
+        db, org_id=org_id, actor=user, action=action, line=s,
+        target_type="credit", target_id=credit.id,
+        target_label=f"{kind.capitalize()} · {contact_name or '—'}",
+        detail=detail,
+    )
+
+    db.add(s)
     db.commit()
     db.refresh(s)
     return _to_resp(s)
@@ -1363,19 +1597,42 @@ def discuss(
     return _to_resp(s)
 
 
-@router.post("/{line_id}/unreconcile", response_model=StatementLineResponse)
+@router.post("/{line_id}/unreconcile", response_model=UnreconcileResult)
 def unreconcile(
     line_id: int,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
     user: User = Depends(require_user),
-):
-    """Undo any reconcile action, restoring the line to PENDING."""
+) -> UnreconcileResult:
+    """
+    Undo any reconcile action, restoring the line to PENDING — ATOMICALLY. Every
+    side effect of the original match is reversed in ONE transaction: the
+    invoice/bill outstanding amount + status, the account balance(s), the learned
+    vendor-timing observation, and any vendor alias THIS match created. Either all
+    of it commits or none of it does. Returns a summary of what was reverted.
+    """
     s = _load_line_for_org(db, line_id, org_id)
     if s.status == StatementLineStatus.PENDING:
-        return _to_resp(s)
+        return UnreconcileResult(line_id=s.id, message="This line is already not reconciled.")
 
     amount = _net_amount(s)
+    reverted_label: str | None = None
+
+    # A credit this line booked (overpayment/prepayment) can only be unwound if
+    # nothing has been built on it — refuse if it's already been allocated to a
+    # bill/invoice (Xero's rule: remove the allocation first).
+    booked_credit = None
+    booked_credit_id = getattr(s, "matched_credit_id", None)
+    if booked_credit_id:
+        cn = db.get(CreditNote, booked_credit_id)
+        if cn and cn.org_id == org_id:
+            booked_credit = cn
+            if round(cn.allocated_amount, 2) > 0.005:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This booked a credit that's been allocated to a bill/invoice. "
+                           "Remove the allocation(s) first, then unreconcile.",
+                )
 
     # Reverse any side effects of the original action
     bulk_inv_raw = getattr(s, "matched_invoice_ids", None)
@@ -1397,6 +1654,7 @@ def unreconcile(
                 db.add(inv)
                 _unrecord_payment_timing(db, org_id, _vendor_key(inv), payment_lag_days(s.date, inv.issue_date))
         _apply_balance(db, s.bank_account_id, -amount, org_id)
+        reverted_label = f"split across {len(allocations)} invoice{'s' if len(allocations) != 1 else ''}"
 
     elif bulk_bill_raw:
         # Bulk bill match — reverse each allocation
@@ -1414,6 +1672,7 @@ def unreconcile(
                 db.add(bill)
                 _unrecord_payment_timing(db, org_id, _vendor_key(bill), payment_lag_days(s.date, bill.issue_date))
         _apply_balance(db, s.bank_account_id, -amount, org_id)
+        reverted_label = f"split across {len(allocations)} bill{'s' if len(allocations) != 1 else ''}"
 
     elif s.matched_invoice_id:
         inv = db.get(Invoice, s.matched_invoice_id)
@@ -1424,6 +1683,7 @@ def unreconcile(
             inv.updated_at = _now()
             db.add(inv)
             _unrecord_payment_timing(db, org_id, _vendor_key(inv), payment_lag_days(s.date, inv.issue_date))
+            reverted_label = f"{inv.number} · {inv.contact_name}"
         _apply_balance(db, s.bank_account_id, -amount, org_id)
 
     elif s.matched_bill_id:
@@ -1435,31 +1695,54 @@ def unreconcile(
             bill.updated_at = _now()
             db.add(bill)
             _unrecord_payment_timing(db, org_id, _vendor_key(bill), payment_lag_days(s.date, bill.issue_date))
+            reverted_label = f"{bill.number or f'Bill #{bill.id}'} · {bill.contact_name}"
         _apply_balance(db, s.bank_account_id, -amount, org_id)
 
     elif s.matched_journal_id:
         j = db.get(JournalEntry, s.matched_journal_id)
         if j and j.org_id == org_id:
+            reverted_label = f"journal entry · {j.contact_name or j.description or '—'}"
             db.delete(j)
         _apply_balance(db, s.bank_account_id, -amount, org_id)
 
     elif s.transfer_to_account_id:
+        to_acc = db.get(BankAccount, s.transfer_to_account_id)
+        reverted_label = f"transfer → {to_acc.name}" if to_acc else "transfer"
         _apply_balance(db, s.bank_account_id, -amount, org_id)
         _apply_balance(db, s.transfer_to_account_id, amount, org_id)
+
+    elif booked_credit is not None:
+        # Pure prepayment — no document was settled, only the credit. Reverse the
+        # full line from the bank balance (the credit itself is deleted below).
+        reverted_label = f"{booked_credit.kind.value} · {booked_credit.contact_name}"
+        _apply_balance(db, s.bank_account_id, -amount, org_id)
+
+    # Delete the vendor alias THIS match learned (precise, by id) so unreconciling
+    # fully reverses the reconciliation — including the self-learning side effect.
+    # No-op if the match learned nothing or the user already removed it.
+    removed_alias: str | None = None
+    learned_id = getattr(s, "learned_alias_id", None)
+    if learned_id:
+        al = db.get(VendorAlias, learned_id)
+        if al and al.org_id == org_id:
+            removed_alias = al.alias
+            db.delete(al)
+
+    # Delete the credit this line booked. Guarded above (no allocations), so this
+    # is safe; it also gives the clearest reverted_label — overriding the settled-
+    # document label for the overpayment case.
+    if booked_credit is not None:
+        reverted_label = f"{booked_credit.kind.value} credit · {booked_credit.contact_name}"
+        db.delete(booked_credit)
 
     _log_audit(
         db, org_id=org_id, actor=user, action=AuditAction.UNRECONCILE, line=s,
         target_type="none", target_label="Unreconciled",
-        detail="Undid " + (
-            f"invoice match (#{s.matched_invoice_id})" if s.matched_invoice_id
-            else f"bill match (#{s.matched_bill_id})" if s.matched_bill_id
-            else f"journal entry (#{s.matched_journal_id})" if s.matched_journal_id
-            else f"transfer to account #{s.transfer_to_account_id}" if s.transfer_to_account_id
-            else "a bulk match" if (getattr(s, "matched_invoice_ids", None) or getattr(s, "matched_bill_ids", None))
-            else "a reconciliation"
-        ),
+        detail="Undid " + (reverted_label or "a reconciliation")
+        + (f"; removed learned alias “{removed_alias}”" if removed_alias else ""),
     )
 
+    # Clear every reconcile link + the learned-alias pointer; back to PENDING.
     s.matched_invoice_id = None
     s.matched_bill_id = None
     s.matched_journal_id = None
@@ -1468,10 +1751,24 @@ def unreconcile(
         s.matched_invoice_ids = None
     if hasattr(s, "matched_bill_ids"):
         s.matched_bill_ids = None
+    if hasattr(s, "learned_alias_id"):
+        s.learned_alias_id = None
+    if hasattr(s, "matched_credit_id"):
+        s.matched_credit_id = None
     s.status = StatementLineStatus.PENDING
     s.reconciled_at = None
 
     db.add(s)
-    db.commit()
-    db.refresh(s)
-    return _to_resp(s)
+    db.commit()  # one atomic commit — all reversals land together or not at all
+
+    parts = ["Moved back to “To reconcile”."]
+    if reverted_label:
+        parts.append(f"Reopened {reverted_label}.")
+    if removed_alias:
+        parts.append(f"Removed the learned alias “{removed_alias}”.")
+    return UnreconcileResult(
+        line_id=line_id,
+        reverted_label=reverted_label,
+        removed_alias=removed_alias,
+        message=" ".join(parts),
+    )

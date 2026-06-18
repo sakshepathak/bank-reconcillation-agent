@@ -424,10 +424,33 @@ class StatementLineResponse(BaseModel):
     transfer_to_account_id: Optional[int]
     matched_invoice_ids: Optional[list[dict]] = None  # bulk: [{"id":1,"amount":520.0},...]
     matched_bill_ids: Optional[list[dict]] = None
+    matched_credit_id: Optional[int] = None           # credit booked by this line (over/prepayment)
     discussion: Optional[str]
     suggested_score: Optional[float]
     imported_at: str
     reconciled_at: Optional[str]
+
+
+class ReconciledLineResponse(BaseModel):
+    """A reconciled statement line for the Reconcile screen's 'Reconciled' tab,
+    with a resolved label of what it was reconciled to."""
+    id: int
+    date: str
+    description: str
+    amount: float                 # absolute amount of the line
+    direction: str                # "in" | "out"
+    status: str
+    target_kind: str              # invoice | bill | journal | transfer | split | other
+    target_label: str             # e.g. "INV-0042 · Acme", "Transfer → Savings"
+    reconciled_at: Optional[str] = None
+
+
+class UnreconcileResult(BaseModel):
+    """Summary of what an unreconcile reverted — shown to the user as a result popup."""
+    line_id: int
+    reverted_label: Optional[str] = None   # what was undone, e.g. "INV-0042 · Acme"
+    removed_alias: Optional[str] = None     # the learned alias text removed, if any
+    message: str
 
 
 class StatementLineImport(BaseModel):
@@ -465,6 +488,21 @@ class MatchBulkInvoicesRequest(BaseModel):
 
 class MatchBulkBillsRequest(BaseModel):
     bill_ids: list[int]
+
+
+class BookCreditRequest(BaseModel):
+    """Book a credit from a bank line during reconciliation.
+
+      overpayment → settles the given bill(s)/invoice(s) IN FULL; the remainder of
+                    the line becomes a credit against that same contact.
+      prepayment  → no document yet; the whole line becomes a credit against the
+                    chosen contact (contact_id or contact_name required).
+    """
+    kind: str                                # "overpayment" | "prepayment"
+    contact_id: Optional[int] = None
+    contact_name: Optional[str] = None
+    document_ids: list[int] = []             # overpayment only: bills (out) / invoices (in)
+    learn_alias: bool = False
 
 
 class CreateEntryRequest(BaseModel):

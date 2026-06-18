@@ -112,6 +112,8 @@ class AuditAction(str, Enum):
     TRANSFER = "transfer"
     DISCUSS = "discuss"
     UNRECONCILE = "unreconcile"
+    BOOK_OVERPAYMENT = "book_overpayment"    # booked an overpayment credit while reconciling
+    BOOK_PREPAYMENT = "book_prepayment"      # booked a prepayment credit while reconciling
 
 
 class AuditLog(SQLModel, table=True):
