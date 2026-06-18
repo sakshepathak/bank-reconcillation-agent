@@ -10,10 +10,12 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useConfirm } from '@/components/ConfirmProvider'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
-import type { Bill, BillLineCreate, DocumentStatus } from '@/types'
+import { CreditsList } from '@/components/CreditsList'
+import type { Bill, BillLineCreate, DocumentStatus, Credit } from '@/types'
 
-type Tab = 'all' | DocumentStatus
+type Tab = 'all' | DocumentStatus | 'credits'
 
 const STATUS_VARIANT: Record<DocumentStatus, 'success' | 'warning' | 'info' | 'muted' | 'destructive'> = {
   draft: 'muted',
@@ -37,6 +39,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'awaiting_approval', label: 'Awaiting Approval' },
   { id: 'awaiting_payment', label: 'Awaiting Payment' },
   { id: 'paid', label: 'Paid' },
+  { id: 'credits', label: 'Overpayments & Prepayments' },
 ]
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -51,6 +54,7 @@ const newLine = (): BillLineCreate => ({
 
 export default function Purchases() {
   const queryClient = useQueryClient()
+  const confirm = useConfirm()
   const [tab, setTab] = useState<Tab>('all')
   const [panelOpen, setPanelOpen] = useState(false)
   const [viewing, setViewing] = useState<Bill | null>(null)
@@ -84,6 +88,11 @@ export default function Purchases() {
     queryFn: () => api.get('/bills/').then((r) => r.data),
   })
 
+  const { data: payableCredits } = useQuery<Credit[]>({
+    queryKey: ['credits', 'payable'],
+    queryFn: () => api.get('/credits/?direction=payable').then((r) => r.data),
+  })
+
   const createMutation = useMutation({
     mutationFn: () =>
       api.post('/bills/', {
@@ -111,6 +120,20 @@ export default function Purchases() {
     },
     onError: () => setDeletingId(null),
   })
+
+  const askDelete = async (b: Bill) => {
+    const ok = await confirm({
+      title: 'Delete this bill?',
+      description: 'This permanently removes the bill.',
+      confirmText: 'Delete',
+      destructive: true,
+      rememberKey: 'delete-bill',
+    })
+    if (ok) {
+      setDeletingId(b.id)
+      deleteMutation.mutate(b.id)
+    }
+  }
 
   const editMutation = useMutation({
     mutationFn: (payload: object) =>
@@ -231,6 +254,7 @@ export default function Purchases() {
     awaiting_payment: bills?.filter((b) => b.status === 'awaiting_payment').length ?? 0,
     paid: bills?.filter((b) => b.status === 'paid').length ?? 0,
     voided: bills?.filter((b) => b.status === 'voided').length ?? 0,
+    credits: payableCredits?.filter((c) => c.outstanding > 0.005).length ?? 0,
   }
 
   const filtered = (bills ?? []).filter((b) => tab === 'all' || b.status === tab)
@@ -337,6 +361,10 @@ export default function Purchases() {
         ))}
       </div>
 
+      {tab === 'credits' ? (
+        <CreditsList direction="payable" />
+      ) : (
+      <>
       {/* Outstanding summary */}
       {filtered.length > 0 && (
         <div className="flex justify-end text-xs text-muted-foreground">
@@ -420,7 +448,7 @@ export default function Purchases() {
                       <Button
                         size="sm" variant="ghost"
                         className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                        onClick={() => { setDeletingId(b.id); deleteMutation.mutate(b.id) }}
+                        onClick={() => askDelete(b)}
                         disabled={deletingId === b.id}
                       >
                         {deletingId === b.id
@@ -435,6 +463,8 @@ export default function Purchases() {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
 
       {/* Upload dock */}
       <UploadDock

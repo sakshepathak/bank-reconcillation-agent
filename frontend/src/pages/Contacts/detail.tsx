@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useConfirm } from '@/components/ConfirmProvider'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import type { ContactDetail, ContactPaymentTiming, ContactType, DocumentStatus } from '@/types'
 
@@ -39,8 +40,8 @@ export default function ContactDetailPage() {
   const contactId = Number(id)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const confirm = useConfirm()
   const [newAlias, setNewAlias] = useState('')
-  const [aliasDeleteId, setAliasDeleteId] = useState<number | null>(null)
 
   const { data, isLoading, isError } = useQuery<ContactDetail>({
     queryKey: ['contact-detail', contactId],
@@ -68,7 +69,6 @@ export default function ContactDetailPage() {
   const deleteAlias = useMutation({
     mutationFn: (aliasId: number) => api.delete(`/aliases/${aliasId}`),
     onSuccess: () => {
-      setAliasDeleteId(null)
       invalidate()
       queryClient.invalidateQueries({ queryKey: ['aliases'] })
     },
@@ -100,7 +100,7 @@ export default function ContactDetailPage() {
     )
   }
 
-  const { contact, invoices, bills, aliases } = data
+  const { contact, invoices, bills, aliases, credits } = data
   const canAdd = newAlias.trim().length > 0 && !addAlias.isPending
 
   return (
@@ -200,37 +200,24 @@ export default function ContactDetailPage() {
                         {(a.confidence * 100).toFixed(0)}%
                       </span>
                     </div>
-                    {aliasDeleteId === a.id ? (
-                      <div className="inline-flex items-center gap-1.5 flex-shrink-0">
-                        <span className="text-xs text-muted-foreground">Delete?</span>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="h-6 px-2 text-xs"
-                          onClick={() => deleteAlias.mutate(a.id)}
-                          disabled={deleteAlias.isPending}
-                        >
-                          Yes
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-6 px-2 text-xs"
-                          onClick={() => setAliasDeleteId(null)}
-                        >
-                          No
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0 text-destructive hover:text-destructive flex-shrink-0"
-                        onClick={() => setAliasDeleteId(a.id)}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 text-destructive hover:text-destructive flex-shrink-0"
+                      disabled={deleteAlias.isPending}
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: 'Delete this alias?',
+                          description: `The matcher will stop recognising "${a.alias}" as ${contact.full_name}.`,
+                          confirmText: 'Delete',
+                          destructive: true,
+                          rememberKey: 'delete-alias',
+                        })
+                        if (ok) deleteAlias.mutate(a.id)
+                      }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -254,6 +241,51 @@ export default function ContactDetailPage() {
           linkPrefix="/purchases"
         />
       </div>
+
+      {/* Credits on account — overpayments & prepayments held against this contact */}
+      {credits.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold mb-2">Credits on account</h2>
+          <Card>
+            <CardContent className="p-0 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/40">
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Type</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Date</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-muted-foreground">Original</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-muted-foreground">Remaining</th>
+                    <th className="px-4 py-2 text-center text-xs font-semibold text-muted-foreground">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {credits.map((c) => (
+                    <tr key={c.id} className="border-b last:border-0">
+                      <td className="px-4 py-2">
+                        <Badge variant="info">{c.kind === 'overpayment' ? 'Overpayment' : 'Prepayment'}</Badge>
+                      </td>
+                      <td className="px-4 py-2 text-xs whitespace-nowrap">{formatDate(c.issue_date)}</td>
+                      <td className="px-4 py-2 text-right font-mono">{formatCurrency(c.original_amount, c.currency)}</td>
+                      <td className="px-4 py-2 text-right font-mono">
+                        {c.outstanding > 0.005 ? (
+                          <span className="text-emerald-700 font-medium">{formatCurrency(c.outstanding, c.currency)}</span>
+                        ) : (
+                          <span className="text-muted-foreground">{formatCurrency(0, c.currency)}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-center">
+                        <Badge variant={c.status === 'paid' ? 'muted' : c.status === 'voided' ? 'destructive' : 'success'}>
+                          {c.status === 'paid' ? 'Fully applied' : c.status === 'voided' ? 'Voided' : 'Available'}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </section>
+      )}
     </div>
   )
 }

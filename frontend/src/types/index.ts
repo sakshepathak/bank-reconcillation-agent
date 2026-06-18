@@ -84,11 +84,71 @@ export interface ContactDocSummary {
   status: DocumentStatus
 }
 
+export type CreditDirection = 'payable' | 'receivable'
+export type CreditKind = 'overpayment' | 'prepayment'
+
+export interface ContactCreditSummary {
+  id: number
+  kind: CreditKind
+  direction: CreditDirection
+  currency: string
+  original_amount: number
+  outstanding: number
+  status: DocumentStatus
+  issue_date: string
+}
+
 export interface ContactDetail {
   contact: Contact
   invoices: ContactDocSummary[]
   bills: ContactDocSummary[]
   aliases: VendorAlias[]
+  credits: ContactCreditSummary[]
+}
+
+export interface CreditAllocation {
+  id: number
+  target_type: string          // 'bill' | 'invoice'
+  target_id: number
+  target_label: string
+  amount: number
+  created_at: string
+}
+
+export interface Credit {
+  id: number
+  contact_id: number | null
+  contact_name: string
+  direction: CreditDirection
+  kind: CreditKind
+  issue_date: string
+  currency: string
+  original_amount: number
+  allocated_amount: number
+  outstanding: number
+  status: DocumentStatus
+  source_statement_line_id: number | null
+  created_at: string
+  allocations: CreditAllocation[]
+}
+
+export interface ReconciledLine {
+  id: number
+  date: string
+  description: string
+  amount: number
+  direction: 'in' | 'out'
+  status: string
+  target_kind: string
+  target_label: string
+  reconciled_at: string | null
+}
+
+export interface UnreconcileResult {
+  line_id: number
+  reverted_label: string | null
+  removed_alias: string | null
+  message: string
 }
 
 export interface ContactPaymentTiming {
@@ -263,6 +323,7 @@ export interface StatementLine {
   transfer_to_account_id: number | null
   matched_invoice_ids: BulkMatchItem[] | null
   matched_bill_ids: BulkMatchItem[] | null
+  matched_credit_id: number | null
   discussion: string | null
   suggested_score: number | null
   imported_at: string

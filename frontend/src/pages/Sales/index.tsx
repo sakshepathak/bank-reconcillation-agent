@@ -10,10 +10,12 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useConfirm } from '@/components/ConfirmProvider'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
-import type { DocumentStatus, Invoice, InvoiceLineCreate } from '@/types'
+import { CreditsList } from '@/components/CreditsList'
+import type { DocumentStatus, Invoice, InvoiceLineCreate, Credit } from '@/types'
 
-type Tab = 'all' | DocumentStatus
+type Tab = 'all' | DocumentStatus | 'credits'
 
 const STATUS_VARIANT: Record<DocumentStatus, 'success' | 'warning' | 'info' | 'muted' | 'destructive'> = {
   draft: 'muted',
@@ -37,6 +39,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'awaiting_approval', label: 'Awaiting Approval' },
   { id: 'awaiting_payment', label: 'Awaiting Payment' },
   { id: 'paid', label: 'Paid' },
+  { id: 'credits', label: 'Overpayments & Prepayments' },
 ]
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -50,6 +53,7 @@ const newLine = (): InvoiceLineCreate => ({
 
 export default function Sales() {
   const queryClient = useQueryClient()
+  const confirm = useConfirm()
   const [tab, setTab] = useState<Tab>('all')
   const [panelOpen, setPanelOpen] = useState(false)
   const [viewing, setViewing] = useState<Invoice | null>(null)
@@ -84,6 +88,11 @@ export default function Sales() {
     queryFn: () => api.get('/invoices/').then((r) => r.data),
   })
 
+  const { data: receivableCredits } = useQuery<Credit[]>({
+    queryKey: ['credits', 'receivable'],
+    queryFn: () => api.get('/credits/?direction=receivable').then((r) => r.data),
+  })
+
   const createMutation = useMutation({
     mutationFn: () =>
       api.post('/invoices/', {
@@ -107,6 +116,20 @@ export default function Sales() {
     },
     onError: () => setDeletingId(null),
   })
+
+  const askDelete = async (inv: Invoice) => {
+    const ok = await confirm({
+      title: 'Delete this invoice?',
+      description: 'This permanently removes the invoice.',
+      confirmText: 'Delete',
+      destructive: true,
+      rememberKey: 'delete-invoice',
+    })
+    if (ok) {
+      setDeletingId(inv.id)
+      deleteMutation.mutate(inv.id)
+    }
+  }
 
   const editMutation = useMutation({
     mutationFn: (payload: object) =>
@@ -232,6 +255,7 @@ export default function Sales() {
     awaiting_payment: invoices?.filter((i) => i.status === 'awaiting_payment').length ?? 0,
     paid: invoices?.filter((i) => i.status === 'paid').length ?? 0,
     voided: invoices?.filter((i) => i.status === 'voided').length ?? 0,
+    credits: receivableCredits?.filter((c) => c.outstanding > 0.005).length ?? 0,
   }
 
   const filtered = (invoices ?? []).filter((i) => tab === 'all' || i.status === tab)
@@ -345,6 +369,10 @@ export default function Sales() {
         ))}
       </div>
 
+      {tab === 'credits' ? (
+        <CreditsList direction="receivable" />
+      ) : (
+      <>
       {/* Outstanding summary */}
       {filtered.length > 0 && (
         <div className="flex justify-end text-xs text-muted-foreground">
@@ -428,7 +456,7 @@ export default function Sales() {
                       <Button
                         size="sm" variant="ghost"
                         className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                        onClick={() => { setDeletingId(inv.id); deleteMutation.mutate(inv.id) }}
+                        onClick={() => askDelete(inv)}
                         disabled={deletingId === inv.id}
                       >
                         {deletingId === inv.id
@@ -443,6 +471,8 @@ export default function Sales() {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
 
       {/* Upload dock — visible whenever there are items, persistent for failures */}
       <UploadDock
