@@ -295,6 +295,18 @@ class StatementLineStatus(str, Enum):
     DISCUSSED = "discussed"      # has a comment, awaiting resolution
 
 
+class CreditDirection(str, Enum):
+    """Which ledger a held credit sits in (mirrors the Bill vs Invoice split)."""
+    PAYABLE = "payable"          # supplier credit — money WE paid out (AP); Bill mirror
+    RECEIVABLE = "receivable"    # customer credit — money received (AR); Invoice mirror
+
+
+class CreditKind(str, Enum):
+    """How a credit arose (Xero's two distinct types)."""
+    OVERPAYMENT = "overpayment"  # paid/received MORE than an existing bill/invoice
+    PREPAYMENT = "prepayment"    # paid/received BEFORE any bill/invoice existed
+
+
 class BankAccount(SQLModel, table=True):
     """
     One row per bank account the company holds. Two balances tracked:
@@ -415,6 +427,70 @@ class BillLine(SQLModel, table=True):
     tax_rate: float = Field(default=0.0)
     line_total: float = Field(default=0.0)
     account_code: Optional[str] = None           # GL account (e.g. "5000")
+
+
+class CreditNote(SQLModel, table=True):
+    """
+    A credit balance held against a contact, born from ONE reconciled bank line —
+    an overpayment (paid more than a document) or a prepayment (paid before any
+    document existed). It is deliberately NOT a Bill/Invoice: a credit is a contra
+    (negative) AP/AR balance, so it lives in its own table and never shows up in
+    the open-document / match-candidate queries that scan bills and invoices.
+
+    `outstanding = original_amount - allocated_amount` is the unallocated credit
+    still available — derived where needed (same idiom as Bill/Invoice
+    `total - paid_amount`), not stored. It is consumed by CreditAllocation rows.
+
+    Status reuses DocumentStatus so the existing status UI works unchanged:
+      AWAITING_PAYMENT → has unallocated credit
+      PAID             → fully allocated
+      VOIDED           → reversed
+    """
+
+    __tablename__ = "credit_note"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: Optional[int] = Field(default=None, foreign_key="organization.id", index=True)
+    contact_id: Optional[int] = Field(default=None, foreign_key="contact.id", index=True)
+    contact_name: str                            # snapshot at booking time
+    direction: CreditDirection = Field(index=True)   # payable (AP) | receivable (AR)
+    kind: CreditKind                             # overpayment | prepayment
+    issue_date: str                              # the source bank line's date
+    currency: str = Field(default="GBP")         # must equal a doc's currency to allocate
+    original_amount: float = Field(default=0.0)  # credit booked (always > 0)
+    allocated_amount: float = Field(default=0.0) # consumed by allocations so far
+    tax_rate: float = Field(default=0.0)         # v1: always 0 (both kinds tax-free)
+    status: DocumentStatus = Field(default=DocumentStatus.AWAITING_PAYMENT, index=True)
+    # The bank line that booked this credit — so unreconcile can find + delete it.
+    source_statement_line_id: Optional[int] = Field(default=None, foreign_key="statement_line.id")
+    reference: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
+
+
+class CreditAllocation(SQLModel, table=True):
+    """
+    One application of a CreditNote against a future bill or invoice — the durable
+    record behind the "Less Overpayment / Amount Due" line. A single credit can
+    allocate across several documents; the sum of its live allocations equals
+    `credit_note.allocated_amount`. Removing an allocation restores that amount to
+    the credit and re-opens the target.
+
+    NO bank movement happens on allocation — it is a pure AP-to-AP / AR-to-AR
+    reallocation, so code that writes these rows must NOT touch the bank balance.
+    `target_id` is a plain id (not an FK); `target_type` says which table it's in.
+    """
+
+    __tablename__ = "credit_allocation"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    org_id: Optional[int] = Field(default=None, foreign_key="organization.id", index=True)
+    credit_note_id: int = Field(foreign_key="credit_note.id", index=True)
+    target_type: str                             # "bill" | "invoice"
+    target_id: int = Field(index=True)
+    amount: float = Field(default=0.0)
+    created_at: str = Field(default="")
 
 
 class JournalEntry(SQLModel, table=True):
@@ -560,6 +636,13 @@ class StatementLine(SQLModel, table=True):
     # Stored as JSON: [{"id": 1, "amount": 520.0}, ...]
     matched_invoice_ids: Optional[str] = Field(default=None)
     matched_bill_ids: Optional[str] = Field(default=None)
+    # If this match created a learned VendorAlias, its id — so unreconcile can
+    # delete exactly that alias (and nothing the user added independently).
+    learned_alias_id: Optional[int] = Field(default=None)
+    # If this reconcile booked a credit (overpayment/prepayment), its CreditNote
+    # id — so unreconcile deletes exactly that credit. Plain int (no FK) to avoid
+    # a circular reference, mirroring learned_alias_id above.
+    matched_credit_id: Optional[int] = Field(default=None)
 
     # Meta
     discussion: Optional[str] = None             # note from "Discuss" tab

@@ -33,6 +33,12 @@ def _run_migrations() -> None:
         # StatementLine: bulk-match columns (1 bank line → N invoices/bills)
         "ALTER TABLE statement_line ADD COLUMN matched_invoice_ids TEXT",
         "ALTER TABLE statement_line ADD COLUMN matched_bill_ids TEXT",
+        # StatementLine: the VendorAlias this match learned (deleted on unreconcile)
+        "ALTER TABLE statement_line ADD COLUMN learned_alias_id INTEGER",
+        # StatementLine: the CreditNote this reconcile booked (deleted on unreconcile).
+        # The credit_note / credit_allocation tables themselves are created by
+        # SQLModel.metadata.create_all (CREATE TABLE IF NOT EXISTS) in init_db.
+        "ALTER TABLE statement_line ADD COLUMN matched_credit_id INTEGER",
     ]
     with engine.connect() as conn:
         for stmt in statements:
