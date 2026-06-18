@@ -114,6 +114,8 @@ class AuditAction(str, Enum):
     UNRECONCILE = "unreconcile"
     BOOK_OVERPAYMENT = "book_overpayment"    # booked an overpayment credit while reconciling
     BOOK_PREPAYMENT = "book_prepayment"      # booked a prepayment credit while reconciling
+    ALLOCATE_CREDIT = "allocate_credit"      # applied a held credit to a bill/invoice
+    REMOVE_ALLOCATION = "remove_allocation"  # reversed a credit allocation
 
 
 class AuditLog(SQLModel, table=True):

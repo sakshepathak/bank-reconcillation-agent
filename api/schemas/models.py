@@ -521,6 +521,41 @@ class DiscussRequest(BaseModel):
     note: str
 
 
+# ── Credits: overpayments & prepayments ──────────────────────────────────────
+
+class AllocateCreditRequest(BaseModel):
+    """Apply some of a held credit to an open bill (payable) or invoice (receivable)."""
+    target_type: str                         # "bill" | "invoice"
+    target_id: int
+    amount: float
+
+
+class CreditAllocationResponse(BaseModel):
+    id: int
+    target_type: str
+    target_id: int
+    target_label: str                        # e.g. "BILL-7 · Acme"
+    amount: float
+    created_at: str
+
+
+class CreditResponse(BaseModel):
+    id: int
+    contact_id: Optional[int]
+    contact_name: str
+    direction: str                           # payable (AP) | receivable (AR)
+    kind: str                                # overpayment | prepayment
+    issue_date: str
+    currency: str
+    original_amount: float
+    allocated_amount: float
+    outstanding: float                       # original - allocated
+    status: str                              # awaiting_payment | paid | voided
+    source_statement_line_id: Optional[int]
+    created_at: str
+    allocations: list[CreditAllocationResponse] = []
+
+
 # ── User Profile ─────────────────────────────────────────────────────────────
 
 class UserProfileResponse(BaseModel):

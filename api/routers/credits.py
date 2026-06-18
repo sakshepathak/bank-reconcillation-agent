@@ -1,0 +1,291 @@
+"""
+Credits — overpayments & prepayments held against a contact.
+
+A credit is a contra AP/AR balance booked during reconciliation (see
+statement_lines.book_credit). This router lets the user SEE credits and CONSUME
+them by allocating the outstanding amount to a future bill/invoice — Xero's
+"Allocate outstanding credit?" → "Less Overpayment / Amount Due" flow.
+
+Allocation is a pure AP-to-AP / AR-to-AR reallocation: it moves the target
+document's paid_amount but **never** touches the bank balance (no cash moves —
+that already happened when the credit was booked). Removing an allocation is the
+exact inverse. Both are atomic and audited.
+"""
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session, select
+
+from memory.models import (
+    CreditNote, CreditAllocation, CreditDirection, DocumentStatus,
+    Bill, Invoice, AuditLog, AuditAction, User,
+)
+from api.schemas.models import (
+    CreditResponse, CreditAllocationResponse, AllocateCreditRequest,
+)
+from api.deps import get_db, get_current_org_id, require_user
+
+router = APIRouter(prefix="/credits", tags=["credits"])
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _outstanding(cn: CreditNote) -> float:
+    return round(cn.original_amount - cn.allocated_amount, 2)
+
+
+def _enum(v) -> str:
+    return v.value if hasattr(v, "value") else str(v)
+
+
+def _load_credit_for_org(db: Session, credit_id: int, org_id: int) -> CreditNote:
+    cn = db.get(CreditNote, credit_id)
+    if not cn or cn.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Credit not found")
+    return cn
+
+
+def _doc_label(db: Session, org_id: int, target_type: str, target_id: int) -> str:
+    if target_type == "bill":
+        b = db.get(Bill, target_id)
+        if b and b.org_id == org_id:
+            return f"{b.number or f'Bill #{b.id}'} · {b.contact_name}"
+    else:
+        inv = db.get(Invoice, target_id)
+        if inv and inv.org_id == org_id:
+            return f"{inv.number} · {inv.contact_name}"
+    return f"{target_type} #{target_id}"
+
+
+def _to_resp(db: Session, org_id: int, cn: CreditNote) -> CreditResponse:
+    allocs = db.exec(
+        select(CreditAllocation)
+        .where(CreditAllocation.credit_note_id == cn.id, CreditAllocation.org_id == org_id)
+        .order_by(CreditAllocation.id)
+    ).all()
+    return CreditResponse(
+        id=cn.id,
+        contact_id=cn.contact_id,
+        contact_name=cn.contact_name,
+        direction=_enum(cn.direction),
+        kind=_enum(cn.kind),
+        issue_date=cn.issue_date,
+        currency=cn.currency,
+        original_amount=round(cn.original_amount, 2),
+        allocated_amount=round(cn.allocated_amount, 2),
+        outstanding=_outstanding(cn),
+        status=_enum(cn.status),
+        source_statement_line_id=cn.source_statement_line_id,
+        created_at=cn.created_at,
+        allocations=[
+            CreditAllocationResponse(
+                id=a.id, target_type=a.target_type, target_id=a.target_id,
+                target_label=_doc_label(db, org_id, a.target_type, a.target_id),
+                amount=round(a.amount, 2), created_at=a.created_at,
+            )
+            for a in allocs
+        ],
+    )
+
+
+def _log_credit_audit(
+    db: Session, *, org_id: int, actor: User, action: AuditAction,
+    cn: CreditNote, amount: float, target_type: str | None = None,
+    target_id: int | None = None, target_label: str = "", detail: str = "",
+) -> None:
+    """Append one immutable audit row for a credit action. Credit actions aren't
+    tied to a bank line, so the statement-line snapshot fields stay blank."""
+    db.add(AuditLog(
+        org_id=org_id,
+        created_at=_now(),
+        actor_id=getattr(actor, "id", None),
+        actor_name=(getattr(actor, "name", "") or getattr(actor, "email", "") or "—"),
+        action=action.value,
+        statement_line_id=cn.source_statement_line_id,
+        bank_account_id=None,
+        line_date=cn.issue_date,
+        line_description=f"{_enum(cn.kind)} · {cn.contact_name}",
+        amount=round(amount, 2),
+        currency=cn.currency,
+        target_type=target_type,
+        target_id=target_id,
+        target_label=target_label,
+        detail=detail,
+    ))
+
+
+# ── Read ─────────────────────────────────────────────────────────────────────
+
+@router.get("/", response_model=list[CreditResponse])
+def list_credits(
+    direction: str | None = None,      # payable | receivable
+    status: str | None = None,         # awaiting_payment | paid | voided
+    contact_id: int | None = None,
+    currency: str | None = None,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    """All credits for the org, newest first. Filterable by direction/status/
+    contact/currency — used by the Credits sub-tabs and the bill 'apply credit' prompt."""
+    q = select(CreditNote).where(CreditNote.org_id == org_id)
+    if direction:
+        q = q.where(CreditNote.direction == direction)
+    if status:
+        q = q.where(CreditNote.status == status)
+    if contact_id is not None:
+        q = q.where(CreditNote.contact_id == contact_id)
+    if currency:
+        q = q.where(CreditNote.currency == currency)
+    q = q.order_by(CreditNote.id.desc())
+    return [_to_resp(db, org_id, cn) for cn in db.exec(q).all()]
+
+
+@router.get("/{credit_id}", response_model=CreditResponse)
+def get_credit(
+    credit_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    return _to_resp(db, org_id, _load_credit_for_org(db, credit_id, org_id))
+
+
+# ── Allocate / remove ────────────────────────────────────────────────────────
+
+@router.post("/{credit_id}/allocate", response_model=CreditResponse)
+def allocate_credit(
+    credit_id: int,
+    body: AllocateCreditRequest,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
+):
+    """
+    Apply some of a credit's outstanding balance to an open bill/invoice. No cash
+    moves — the target's paid_amount goes up (flipping it to Paid if fully covered)
+    and the credit's outstanding goes down. Capped at both the credit's remaining
+    balance and the document's amount owing, so neither can be over-applied.
+    """
+    cn = _load_credit_for_org(db, credit_id, org_id)
+    if cn.status == DocumentStatus.VOIDED:
+        raise HTTPException(status_code=409, detail="This credit has been voided")
+
+    outstanding = _outstanding(cn)
+    if outstanding <= 0.005:
+        raise HTTPException(status_code=409, detail="This credit is fully allocated")
+
+    # A payable (supplier) credit applies to bills; a receivable to invoices.
+    want = "bill" if cn.direction == CreditDirection.PAYABLE else "invoice"
+    if body.target_type != want:
+        raise HTTPException(
+            status_code=422,
+            detail=f"A {cn.direction.value} credit can only be applied to a {want}",
+        )
+
+    Model = Bill if want == "bill" else Invoice
+    target = db.get(Model, body.target_id)
+    if not target or target.org_id != org_id:
+        raise HTTPException(status_code=404, detail=f"{want.capitalize()} not found")
+    if target.status in (DocumentStatus.PAID, DocumentStatus.VOIDED):
+        raise HTTPException(status_code=409, detail=f"{want.capitalize()} is not open for payment")
+    if cn.currency != target.currency:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot apply a {cn.currency} credit to a {target.currency} {want} — currencies must match",
+        )
+    if (cn.contact_id and target.contact_id and cn.contact_id != target.contact_id):
+        raise HTTPException(status_code=422, detail=f"That {want} belongs to a different contact")
+
+    target_outstanding = round(target.total - target.paid_amount, 2)
+    if target_outstanding <= 0.005:
+        raise HTTPException(status_code=409, detail=f"{want.capitalize()} is already fully paid")
+
+    amount = round(body.amount, 2)
+    if amount <= 0:
+        raise HTTPException(status_code=422, detail="amount must be positive")
+    if amount > outstanding + 0.005:
+        raise HTTPException(status_code=409, detail=f"Only {outstanding:.2f} {cn.currency} of credit remains")
+    if amount > target_outstanding + 0.005:
+        raise HTTPException(status_code=409, detail=f"{want.capitalize()} only has {target_outstanding:.2f} owing")
+
+    now = _now()
+    db.add(CreditAllocation(
+        org_id=org_id, credit_note_id=cn.id,
+        target_type=want, target_id=target.id, amount=amount, created_at=now,
+    ))
+
+    cn.allocated_amount = round(cn.allocated_amount + amount, 2)
+    cn.status = DocumentStatus.PAID if _outstanding(cn) <= 0.005 else DocumentStatus.AWAITING_PAYMENT
+    cn.updated_at = now
+
+    target.paid_amount = round(target.paid_amount + amount, 2)
+    if target.paid_amount >= target.total - 0.005:
+        target.status = DocumentStatus.PAID
+    target.updated_at = now
+
+    # Money can't be conjured: a credit can never end up over-allocated.
+    if round(cn.allocated_amount, 2) > round(cn.original_amount, 2) + 0.01:
+        raise HTTPException(status_code=500, detail="Allocation would over-spend the credit")
+
+    label = _doc_label(db, org_id, want, target.id)
+    _log_credit_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.ALLOCATE_CREDIT, cn=cn,
+        amount=amount, target_type=want, target_id=target.id, target_label=label,
+        detail=f"Allocated {amount:.2f} {cn.currency} of {_enum(cn.kind)} to {label}",
+    )
+
+    db.add(cn); db.add(target)
+    db.commit()
+    db.refresh(cn)
+    return _to_resp(db, org_id, cn)
+
+
+@router.delete("/{credit_id}/allocations/{allocation_id}", response_model=CreditResponse)
+def remove_allocation(
+    credit_id: int,
+    allocation_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
+):
+    """
+    Reverse a single allocation — the exact inverse of allocate: the target's
+    paid_amount drops (re-opening it if it was Paid) and the credit's outstanding
+    is restored. Atomic. (Xero's "remove the allocation" before a credit can be
+    voided.)
+    """
+    cn = _load_credit_for_org(db, credit_id, org_id)
+    alloc = db.get(CreditAllocation, allocation_id)
+    if not alloc or alloc.org_id != org_id or alloc.credit_note_id != cn.id:
+        raise HTTPException(status_code=404, detail="Allocation not found")
+
+    now = _now()
+    Model = Bill if alloc.target_type == "bill" else Invoice
+    target = db.get(Model, alloc.target_id)
+    if target and target.org_id == org_id:
+        target.paid_amount = round(target.paid_amount - alloc.amount, 2)
+        if target.paid_amount < target.total - 0.005 and target.status == DocumentStatus.PAID:
+            target.status = DocumentStatus.AWAITING_PAYMENT
+        target.updated_at = now
+        db.add(target)
+
+    cn.allocated_amount = round(cn.allocated_amount - alloc.amount, 2)
+    if cn.allocated_amount < 0:
+        cn.allocated_amount = 0.0
+    if cn.status != DocumentStatus.VOIDED:
+        cn.status = DocumentStatus.AWAITING_PAYMENT   # has outstanding again
+    cn.updated_at = now
+
+    label = _doc_label(db, org_id, alloc.target_type, alloc.target_id)
+    _log_credit_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.REMOVE_ALLOCATION, cn=cn,
+        amount=alloc.amount, target_type=alloc.target_type, target_id=alloc.target_id,
+        target_label=label, detail=f"Removed allocation of {alloc.amount:.2f} {cn.currency} from {label}",
+    )
+
+    db.delete(alloc)
+    db.add(cn)
+    db.commit()
+    db.refresh(cn)
+    return _to_resp(db, org_id, cn)
