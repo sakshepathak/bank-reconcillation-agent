@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useIsFetching, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import * as Dialog from '@radix-ui/react-dialog'
+import { useConfirm } from '@/components/ConfirmProvider'
+import { useToast } from '@/components/ToastProvider'
 import {
   Check, ArrowRightLeft, MessageSquare, Plus, Sparkles,
   Landmark, Loader2, ChevronDown, ChevronUp, ArrowDownUp,
 } from 'lucide-react'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -15,7 +18,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import { viewFor, THRESHOLDS } from '@/lib/match'
-import type { BankAccount, StatementLine } from '@/types'
+import { RotateCcw, CheckCircle2, AlertTriangle } from 'lucide-react'
+import type { BankAccount, StatementLine, ReconciledLine, UnreconcileResult, Bill, Invoice } from '@/types'
 
 interface Suggestion {
   type: 'invoice' | 'bill'
@@ -46,7 +50,7 @@ interface BulkMatchData {
   suggested_groups: number[][]  // [[id1,id2,id3], ...]
 }
 
-type SubTab = 'match' | 'create' | 'transfer' | 'discuss'
+type SubTab = 'match' | 'create' | 'credit' | 'transfer' | 'discuss'
 
 // Thresholds come from the central match module so UI + future logic stay in sync.
 const { HIGH, MID_LOW } = THRESHOLDS
@@ -170,6 +174,8 @@ function ReconcileForAccount({
   const done = Math.max(0, total - analysing)
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
 
+  const [tab, setTab] = useState<'todo' | 'reconciled'>('todo')
+
   // Presentational date sort for the lines list (toggle: oldest ↔ newest). Sorts a
   // copy so we never mutate the query cache; the backend default is newest-first.
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -226,29 +232,42 @@ function ReconcileForAccount({
         </Card>
       )}
 
-      {/* Analysis progress banner — visible while suggestions are computing so
-          the page never looks frozen during the matcher's (cold-start) work. */}
+      {/* Tabs: switch between unreconciled lines and reconciled (undoable) ones */}
+      <div className="flex items-center gap-1 border-b border-border">
+        <TabBtn active={tab === 'todo'} onClick={() => setTab('todo')}>
+          To reconcile
+          {(account?.pending_count ?? 0) > 0 && (
+            <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+              {account!.pending_count}
+            </span>
+          )}
+        </TabBtn>
+        <TabBtn active={tab === 'reconciled'} onClick={() => setTab('reconciled')}>
+          Reconciled
+        </TabBtn>
+      </div>
+
+      {tab === 'reconciled' ? (
+        <ReconciledList accountId={accountId} currency={account?.currency ?? 'GBP'} />
+      ) : (
+        <>
+
+      {/* Analysis progress — a circular ring (not a bar) so the page never looks
+          frozen during the matcher's cold-start work, and the user can always see
+          how far along it is. Once results are cached it won't reappear on return. */}
       {!linesLoading && total > 0 && analysing > 0 && (
-        <div className="flex items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5">
-          <Loader2 className="w-4 h-4 animate-spin text-indigo-600 flex-shrink-0" />
+        <div className="flex items-center gap-3.5 rounded-xl border border-indigo-200 bg-indigo-50/70 px-4 py-3">
+          <ProgressRing done={done} total={total} pct={pct} />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-sm font-medium text-indigo-900">
-                Finding matches for your transactions…
-              </p>
-              <span className="text-xs font-mono text-indigo-700">{done}/{total}</span>
-            </div>
-            <div className="h-1.5 w-full bg-indigo-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-indigo-500 rounded-full transition-all duration-300"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <p className="text-[11px] text-indigo-600 mt-1">
+            <p className="text-sm font-medium text-indigo-900">
+              Finding matches for your transactions…
+            </p>
+            <p className="text-[11px] text-indigo-600 mt-0.5">
               Matching each line against open invoices and bills. The first run warms up the
-              matcher, so it can take a few seconds.
+              matcher, so it can take a few seconds — results stay ready after that.
             </p>
           </div>
+          <Loader2 className="w-4 h-4 animate-spin text-indigo-400 flex-shrink-0" />
         </div>
       )}
 
@@ -300,7 +319,25 @@ function ReconcileForAccount({
           ))}
         </div>
       )}
+        </>
+      )}
     </div>
+  )
+}
+
+function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        '-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors',
+        active
+          ? 'border-primary text-foreground'
+          : 'border-transparent text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -309,6 +346,37 @@ function BalanceCell({ label, value, currency }: { label: string; value: number;
     <div>
       <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
       <p className="text-base font-bold font-mono">{formatCurrency(value, currency)}</p>
+    </div>
+  )
+}
+
+// A determinate circular progress ring (done/total in the centre) — the polished
+// stand-in for the old progress bar while the matcher analyses the statement.
+function ProgressRing({ done, total, pct }: { done: number; total: number; pct: number }) {
+  const size = 42
+  const stroke = 3.5
+  const r = (size - stroke) / 2
+  const circumference = 2 * Math.PI * r
+  const offset = circumference * (1 - Math.max(0, Math.min(1, pct / 100)))
+  return (
+    <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-indigo-100" />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          className="stroke-indigo-500 transition-[stroke-dashoffset] duration-500 ease-out"
+        />
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold tabular-nums text-indigo-700">
+        {done}/{total}
+      </span>
     </div>
   )
 }
@@ -329,10 +397,16 @@ function ReconcileRow({
   const isInflow = line.received > 0
   const amount = isInflow ? line.received : line.spent
 
-  // Fetch suggestions ONCE per row, share across tabs + tab-default logic
+  // Fetch suggestions ONCE per row, share across tabs + tab-default logic.
+  // Cache for the whole session: matching is expensive (cold-start embeddings),
+  // so leaving Reconcile and coming back should be instant, never a recompute.
+  // Mutations (match / unreconcile / duplicate-delete) explicitly invalidate
+  // ['suggestions', ...] whenever the underlying data actually changes.
   const { data: suggestions, isLoading: suggestionsLoading } = useQuery<Suggestion[]>({
     queryKey: ['suggestions', line.id],
     queryFn: () => api.get(`/statement-lines/${line.id}/suggestions`).then((r) => r.data),
+    staleTime: Infinity,
+    gcTime: Infinity,
   })
 
   // Smart default tab — picked when suggestions arrive, then locked.
@@ -373,7 +447,7 @@ function ReconcileRow({
         {/* TOP STRIP: tabs + date */}
         <div className="flex items-center justify-between px-3 py-1.5 border-b bg-muted/30">
           <div className="flex items-center gap-0.5">
-            {(['match', 'create', 'transfer', 'discuss'] as SubTab[]).map((t) => (
+            {(['match', 'create', 'credit', 'transfer', 'discuss'] as SubTab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -440,6 +514,9 @@ function ReconcileRow({
             {activeTab === 'create' && (
               <CreateTab line={line} isInflow={isInflow} onSuccess={invalidate} />
             )}
+            {activeTab === 'credit' && (
+              <CreditTab line={line} isInflow={isInflow} currency={currency} onSuccess={invalidate} />
+            )}
             {activeTab === 'transfer' && (
               <TransferTab line={line} otherAccounts={otherAccounts} onSuccess={invalidate} />
             )}
@@ -471,8 +548,8 @@ function MatchTab({
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [bulkOpen, setBulkOpen] = useState(false)
-  // Self-learning: default-on for inferred matches, opt-out via the checkbox.
-  const [learnAlias, setLearnAlias] = useState(true)
+  const confirm = useConfirm()
+  const toast = useToast()
   const queryClient = useQueryClient()
 
   // Bulk suggestions — vendor-identified from bank description
@@ -480,6 +557,8 @@ function MatchTab({
     queryKey: ['bulk-suggestions', line.id],
     queryFn: () =>
       api.get(`/statement-lines/${line.id}/bulk-suggestions`).then((r) => r.data),
+    staleTime: Infinity,
+    gcTime: Infinity,
   })
 
   // Auto-open bulk panel if the system found an exact group
@@ -505,25 +584,46 @@ function MatchTab({
   const canLearn = !!selected && (selected.method === 'fuzzy' || selected.method === 'fuzzy+embed')
 
   const matchMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: (learn: boolean) => {
       if (!selected) throw new Error('no selection')
       const endpoint =
         selected.type === 'invoice'
           ? `/statement-lines/${line.id}/match-invoice`
           : `/statement-lines/${line.id}/match-bill`
-      const learn = canLearn && learnAlias
       const body =
         selected.type === 'invoice'
           ? { invoice_id: selected.id, learn_alias: learn }
           : { bill_id: selected.id, learn_alias: learn }
       return api.post(endpoint, body)
     },
-    onSuccess: () => {
-      // Reflect a newly-learned alias on the Vendor Aliases page immediately.
-      if (canLearn && learnAlias) queryClient.invalidateQueries({ queryKey: ['aliases'] })
+    onSuccess: (_data, learn) => {
+      // Reflect a newly-learned alias on the Vendor Aliases page immediately, and
+      // confirm to the user that it was saved (otherwise the save is invisible).
+      if (learn) {
+        queryClient.invalidateQueries({ queryKey: ['aliases'] })
+        toast(`Remembered “${selected?.contact_name}” for next time`)
+      }
       onSuccess()
     },
   })
+
+  // On an INFERRED match, ask via a pop-up whether to remember the vendor before
+  // committing — replaces the old inline "Remember…" checkbox. "Don't ask again"
+  // persists the Yes/No choice so the prompt doesn't nag on every match.
+  const handleMatch = async () => {
+    let learn = false
+    if (canLearn) {
+      learn = await confirm({
+        title: 'Remember this vendor?',
+        description: `Save “${line.description}” → ${selected?.contact_name} so future statements auto-match it.`,
+        confirmText: 'Yes, remember',
+        cancelText: 'No',
+        rememberKey: 'remember-vendor',
+        persistChoice: true,
+      })
+    }
+    matchMutation.mutate(learn)
+  }
 
   const hasBulkDocs = (bulkData?.open_docs.length ?? 0) >= 2
   const hasRegular = suggestions.length > 0
@@ -623,28 +723,13 @@ function MatchTab({
         </div>
       )}
 
-      {/* Self-learning opt-in — only when the engine inferred the vendor name */}
-      {hasRegular && canLearn && (
-        <label className="flex items-start gap-2 pt-1 text-[11px] text-muted-foreground cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={learnAlias}
-            onChange={(e) => setLearnAlias(e.target.checked)}
-            className="mt-0.5 h-3.5 w-3.5 rounded border-input accent-primary flex-shrink-0"
-          />
-          <span>
-            Remember <span className="font-medium text-foreground">“{selected?.contact_name}”</span> for this
-            description, so it auto-matches next time.
-          </span>
-        </label>
-      )}
-
-      {/* Single-match OK button */}
+      {/* Single-match OK button — on an inferred match this pops the
+          "Remember this vendor?" dialog before committing. */}
       {hasRegular && (
         <div className="flex items-center gap-2 pt-0.5">
           <Button size="sm" className="h-7 px-4 text-xs"
             variant={isExact ? 'default' : 'outline'}
-            onClick={() => matchMutation.mutate()}
+            onClick={handleMatch}
             disabled={!selected || matchMutation.isPending}
           >
             {matchMutation.isPending
@@ -1166,6 +1251,157 @@ function CreateTab({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Credit tab — book an overpayment or prepayment from a line that doesn't match
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CreditTab({
+  line, isInflow, currency, onSuccess,
+}: {
+  line: StatementLine
+  isInflow: boolean
+  currency: string
+  onSuccess: () => void
+}) {
+  const toast = useToast()
+  const qc = useQueryClient()
+  const lineAmount = isInflow ? line.received : line.spent
+  const docNoun = isInflow ? 'invoice' : 'bill'
+  const docPath = isInflow ? 'invoices' : 'bills'
+
+  const [mode, setMode] = useState<'overpayment' | 'prepayment'>('prepayment')
+  const [contactName, setContactName] = useState('')
+  const [docId, setDocId] = useState<number | null>(null)
+
+  const { data: docs } = useQuery<(Bill | Invoice)[]>({
+    queryKey: [docPath],
+    queryFn: () => api.get(`/${docPath}/`).then((r) => r.data),
+    enabled: mode === 'overpayment',
+  })
+  // Open docs the payment genuinely EXCEEDS (so there's a real overpayment left over).
+  const candidates = (docs ?? []).filter(
+    (d) =>
+      d.outstanding > 0.005 &&
+      d.status !== 'paid' &&
+      d.status !== 'voided' &&
+      d.currency === currency &&
+      d.outstanding < lineAmount - 0.005,
+  )
+  const picked = candidates.find((d) => d.id === docId) ?? null
+  const creditAmount = picked
+    ? Math.round((lineAmount - picked.outstanding) * 100) / 100
+    : lineAmount
+
+  const book = useMutation({
+    mutationFn: () =>
+      api.post(
+        `/statement-lines/${line.id}/book-credit`,
+        mode === 'overpayment'
+          ? { kind: 'overpayment', document_ids: docId ? [docId] : [] }
+          : { kind: 'prepayment', contact_name: contactName },
+      ),
+    onSuccess: () => {
+      toast(`Booked ${mode} of ${formatCurrency(creditAmount, currency)}`)
+      qc.invalidateQueries({ queryKey: ['credits'] })
+      qc.invalidateQueries({ queryKey: [docPath] })
+      onSuccess()
+    },
+    onError: (e) => toast(e instanceof ApiError ? e.message : 'Could not book credit', 'error'),
+  })
+
+  const valid = mode === 'prepayment' ? contactName.trim().length > 0 : docId != null
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1">
+        {(['prepayment', 'overpayment'] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={cn(
+              'px-2.5 py-1 text-xs font-medium rounded capitalize transition-colors',
+              mode === m
+                ? 'bg-background text-foreground shadow-sm border'
+                : 'text-muted-foreground hover:bg-muted',
+            )}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'prepayment' ? (
+        <>
+          <p className="text-[11px] text-muted-foreground">
+            No {docNoun} yet — hold the whole {formatCurrency(lineAmount, currency)} as a credit
+            against this contact, to apply to a future {docNoun}.
+          </p>
+          <Input
+            value={contactName}
+            onChange={(e) => setContactName(e.target.value)}
+            placeholder={isInflow ? 'Customer' : 'Supplier'}
+            className="h-8 text-xs"
+          />
+        </>
+      ) : (
+        <>
+          <p className="text-[11px] text-muted-foreground">
+            Pick the {docNoun} this payment settles — it's paid in full and the extra becomes a credit.
+          </p>
+          {!candidates.length ? (
+            <p className="text-[11px] text-muted-foreground py-2">
+              No open {docNoun} smaller than {formatCurrency(lineAmount, currency)} to overpay.
+            </p>
+          ) : (
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {candidates.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => setDocId(d.id)}
+                  className={cn(
+                    'w-full flex items-center justify-between rounded border px-2 py-1.5 text-left text-xs transition-colors',
+                    docId === d.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/40',
+                  )}
+                >
+                  <span className="font-medium truncate">
+                    {d.number ?? `${docNoun} #${d.id}`} · {d.contact_name}
+                  </span>
+                  <span className="font-mono text-amber-700 ml-2 shrink-0">
+                    {formatCurrency(d.outstanding, d.currency)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="flex items-center gap-2">
+        {(mode === 'prepayment' || picked) && (
+          <span className="text-[11px] text-muted-foreground">
+            Credit:{' '}
+            <span className="font-mono font-medium text-foreground">
+              {formatCurrency(creditAmount, currency)}
+            </span>
+          </span>
+        )}
+        <Button
+          size="sm"
+          className="h-7 px-4 text-xs ml-auto capitalize"
+          onClick={() => book.mutate()}
+          disabled={!valid || book.isPending}
+        >
+          {book.isPending ? (
+            <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Booking…</>
+          ) : (
+            <>Book {mode}</>
+          )}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Transfer tab
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1267,5 +1503,219 @@ function DiscussTab({
         )}
       </Button>
     </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reconciled tab — done items, each with what it matched to + an Unreconcile flow
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ReconciledList({ accountId, currency }: { accountId: number; currency: string }) {
+  const [target, setTarget] = useState<ReconciledLine | null>(null)
+
+  // staleTime 0 so switching to this tab always shows the current set (a line just
+  // reconciled on the other tab appears here immediately).
+  const { data: rows, isLoading } = useQuery<ReconciledLine[]>({
+    queryKey: ['reconciled', accountId],
+    queryFn: () =>
+      api.get(`/statement-lines/reconciled?bank_account_id=${accountId}`).then((r) => r.data),
+    staleTime: 0,
+  })
+
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
+      </div>
+    )
+  }
+
+  if (!rows?.length) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <Sparkles className="w-8 h-8 text-muted-foreground/40 mx-auto mb-3" />
+          <p className="text-sm font-medium">Nothing reconciled yet</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Reconciled lines show up here — where you can undo any of them.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <>
+      <p className="px-1 text-xs font-medium text-muted-foreground">
+        {rows.length} reconciled line{rows.length === 1 ? '' : 's'}
+      </p>
+      <div className="space-y-2">
+        {rows.map((row) => (
+          <Card key={row.id}>
+            <CardContent className="flex items-center gap-3 py-2.5 px-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium">{row.description || '—'}</span>
+                  <span className="whitespace-nowrap text-[10px] text-muted-foreground">
+                    {formatDate(row.date)}
+                  </span>
+                </div>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  Reconciled to <span className="text-foreground">{row.target_label}</span>
+                </p>
+              </div>
+              <span
+                className={cn(
+                  'whitespace-nowrap font-mono text-sm font-semibold',
+                  row.direction === 'in' ? 'text-emerald-600' : 'text-foreground',
+                )}
+              >
+                {row.direction === 'in' ? '+' : '−'}
+                {formatCurrency(row.amount, currency)}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-shrink-0"
+                onClick={() => setTarget(row)}
+              >
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                Unreconcile
+              </Button>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {target && (
+        <UnreconcileDialog
+          key={target.id}
+          line={target}
+          accountId={accountId}
+          onClose={() => setTarget(null)}
+        />
+      )}
+    </>
+  )
+}
+
+// Confirm → visible loading → center-screen result. Reuses radix Dialog so it's
+// modal, focus-trapped and centred. Cannot be dismissed mid-revert.
+function UnreconcileDialog({
+  line,
+  accountId,
+  onClose,
+}: {
+  line: ReconciledLine
+  accountId: number
+  onClose: () => void
+}) {
+  const queryClient = useQueryClient()
+
+  const mut = useMutation({
+    mutationFn: () =>
+      api.post(`/statement-lines/${line.id}/unreconcile`).then((r) => r.data as UnreconcileResult),
+    onSuccess: () => {
+      // Everything that could have changed when reversing the reconciliation.
+      for (const key of [
+        ['reconciled', accountId], ['statement-lines'], ['suggestions'],
+        ['bulk-suggestions'], ['bank-accounts'], ['aliases'], ['invoices'], ['bills'],
+      ]) {
+        queryClient.invalidateQueries({ queryKey: key })
+      }
+    },
+  })
+
+  const phase = mut.isPending ? 'loading' : mut.isSuccess ? 'done' : mut.isError ? 'error' : 'confirm'
+
+  const tryClose = () => {
+    if (!mut.isPending) onClose()  // never close mid-revert
+  }
+
+  return (
+    <Dialog.Root open onOpenChange={(o) => !o && tryClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[1px] data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+        <Dialog.Content
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => mut.isPending && e.preventDefault()}
+          className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-card p-6 shadow-2xl focus:outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+        >
+          {phase === 'confirm' && (
+            <>
+              <div className="flex items-start gap-4">
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600">
+                  <RotateCcw className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1 pt-0.5">
+                  <Dialog.Title className="text-base font-semibold leading-6">
+                    Unreconcile this transaction?
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-sm text-muted-foreground">
+                    It moves back to <span className="font-medium text-foreground">To reconcile</span> and reopens{' '}
+                    <span className="font-medium text-foreground">{line.target_label}</span>. Any vendor alias this
+                    match learned is removed too. Nothing is committed unless every step succeeds.
+                  </Dialog.Description>
+                </div>
+              </div>
+              <div className="mt-6 flex justify-end gap-2.5">
+                <Button variant="outline" size="sm" onClick={tryClose}>Cancel</Button>
+                <Button size="sm" onClick={() => mut.mutate()}>Unreconcile</Button>
+              </div>
+            </>
+          )}
+
+          {phase === 'loading' && (
+            <div className="flex flex-col items-center justify-center gap-3 py-6 text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm font-medium">Unreconciling…</p>
+              <p className="text-xs text-muted-foreground">
+                Reversing the match, the balance and any learned alias.
+              </p>
+            </div>
+          )}
+
+          {phase === 'done' && mut.data && (
+            <div className="text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                <CheckCircle2 className="h-6 w-6" />
+              </div>
+              <Dialog.Title className="text-base font-semibold">Unreconciled</Dialog.Title>
+              <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+                <p>Moved back to <span className="font-medium text-foreground">To reconcile</span>.</p>
+                {mut.data.reverted_label && (
+                  <p>Reopened <span className="font-medium text-foreground">{mut.data.reverted_label}</span>.</p>
+                )}
+                {mut.data.removed_alias && (
+                  <p>
+                    Removed learned alias{' '}
+                    <span className="font-medium text-foreground">“{mut.data.removed_alias}”</span>.
+                  </p>
+                )}
+              </div>
+              <div className="mt-6 flex justify-center">
+                <Button size="sm" onClick={onClose}>Done</Button>
+              </div>
+            </div>
+          )}
+
+          {phase === 'error' && (
+            <div className="text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <Dialog.Title className="text-base font-semibold">Couldn’t unreconcile</Dialog.Title>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Nothing was changed — it’s all-or-nothing. Please try again.
+              </p>
+              <div className="mt-6 flex justify-center gap-2.5">
+                <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+                <Button size="sm" onClick={() => mut.reset()}>Try again</Button>
+              </div>
+            </div>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
