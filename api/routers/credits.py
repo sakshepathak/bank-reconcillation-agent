@@ -116,6 +116,48 @@ def _log_credit_audit(
     ))
 
 
+def reverse_allocations_for_target(
+    db: Session, *, org_id: int, target_type: str, target_id: int,
+    actor: User | None = None, reason: str = "",
+) -> float:
+    """
+    Reverse every credit allocation made against a bill/invoice — used when that
+    document is voided or deleted, so the money (still ours) comes back as available
+    credit. Restores each credit's outstanding balance and deletes the allocation
+    rows. Does NOT change the target's paid_amount (the caller is deleting/voiding
+    the document). Runs inside the caller's transaction. Returns the amount restored.
+    """
+    allocs = db.exec(
+        select(CreditAllocation).where(
+            CreditAllocation.org_id == org_id,
+            CreditAllocation.target_type == target_type,
+            CreditAllocation.target_id == target_id,
+        )
+    ).all()
+    now = _now()
+    restored = 0.0
+    for a in allocs:
+        cn = db.get(CreditNote, a.credit_note_id)
+        if cn and cn.org_id == org_id:
+            cn.allocated_amount = round(cn.allocated_amount - a.amount, 2)
+            if cn.allocated_amount < 0:
+                cn.allocated_amount = 0.0
+            if cn.status != DocumentStatus.VOIDED:
+                cn.status = DocumentStatus.AWAITING_PAYMENT
+            cn.updated_at = now
+            db.add(cn)
+            if actor is not None:
+                _log_credit_audit(
+                    db, org_id=org_id, actor=actor, action=AuditAction.REMOVE_ALLOCATION,
+                    cn=cn, amount=a.amount, target_type=target_type, target_id=target_id,
+                    target_label=_doc_label(db, org_id, target_type, target_id),
+                    detail=(f"Credit restored ({reason})" if reason else "Credit restored"),
+                )
+            restored = round(restored + a.amount, 2)
+        db.delete(a)
+    return restored
+
+
 # ── Read ─────────────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=list[CreditResponse])

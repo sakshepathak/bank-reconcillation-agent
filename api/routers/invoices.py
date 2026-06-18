@@ -5,11 +5,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlmodel import Session, select
 
-from memory.models import Invoice, InvoiceLine, DocumentStatus
+from memory.models import Invoice, InvoiceLine, DocumentStatus, User
 from api.schemas.models import (
     InvoiceCreate, InvoiceResponse, InvoiceUpdate, InvoiceLineResponse,
 )
-from api.deps import get_db, get_current_org_id
+from api.deps import get_db, get_current_org_id, require_user
 from engine.contacts import upsert_contact
 from engine.file_store import save_upload
 from mcp_server.tools.invoice_extractor import extract_invoice, extract_multi_from_file
@@ -193,11 +193,15 @@ def update_invoice(
     body: InvoiceUpdate,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
     inv = _load_invoice_for_org(db, invoice_id, org_id)
     data = body.model_dump(exclude_unset=True)
     if "status" in data:
         data["status"] = DocumentStatus(data["status"])
+    becoming_voided = (
+        data.get("status") == DocumentStatus.VOIDED and inv.status != DocumentStatus.VOIDED
+    )
     # When total changes, sync subtotal and the single extracted line if present
     if "total" in data:
         new_total = float(data["total"])
@@ -214,6 +218,14 @@ def update_invoice(
         upsert_contact(db, org_id=org_id, name=data["contact_name"], contact_type="customer")
     for k, v in data.items():
         setattr(inv, k, v)
+    if becoming_voided:
+        # Voiding an invoice releases any credit that was allocated to it.
+        from api.routers.credits import reverse_allocations_for_target
+        restored = reverse_allocations_for_target(
+            db, org_id=org_id, target_type="invoice", target_id=inv.id, actor=user,
+            reason="invoice voided",
+        )
+        inv.paid_amount = round(max(0.0, inv.paid_amount - restored), 2)
     inv.updated_at = _now()
     db.add(inv)
     db.commit()
@@ -229,8 +241,15 @@ def delete_invoice(
     invoice_id: int,
     db: Session = Depends(get_db),
     org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
 ):
+    from api.routers.credits import reverse_allocations_for_target
     inv = _load_invoice_for_org(db, invoice_id, org_id)
+    # Any credit applied to this invoice comes back — the money is still ours.
+    reverse_allocations_for_target(
+        db, org_id=org_id, target_type="invoice", target_id=invoice_id, actor=user,
+        reason="invoice deleted",
+    )
     lines = db.exec(
         select(InvoiceLine).where(InvoiceLine.invoice_id == invoice_id, InvoiceLine.org_id == org_id)
     ).all()

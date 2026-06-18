@@ -3,10 +3,13 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from memory.models import Bill, Contact, DocumentStatus, Invoice, VendorAlias, VendorPaymentProfile
+from memory.models import (
+    Bill, Contact, CreditNote, DocumentStatus, Invoice, VendorAlias, VendorPaymentProfile,
+)
 from api.schemas.models import (
     AliasResponse,
     ContactCreate,
+    ContactCreditSummary,
     ContactDetailResponse,
     ContactDocSummary,
     ContactPaymentTimingResponse,
@@ -111,6 +114,11 @@ def get_contact_detail(
         .where(VendorAlias.org_id == org_id, VendorAlias.contact_id == contact_id)
         .order_by(VendorAlias.created_at.desc())
     ).all()
+    credits = db.exec(
+        select(CreditNote)
+        .where(CreditNote.org_id == org_id, CreditNote.contact_id == contact_id)
+        .order_by(CreditNote.id.desc())
+    ).all()
 
     return ContactDetailResponse(
         contact=_to_resp(contact),
@@ -123,6 +131,19 @@ def get_contact_detail(
                 source=a.source, created_at=a.created_at,
             )
             for a in aliases
+        ],
+        credits=[
+            ContactCreditSummary(
+                id=c.id,
+                kind=c.kind.value if hasattr(c.kind, "value") else str(c.kind),
+                direction=c.direction.value if hasattr(c.direction, "value") else str(c.direction),
+                currency=c.currency,
+                original_amount=round(c.original_amount, 2),
+                outstanding=round(c.original_amount - c.allocated_amount, 2),
+                status=c.status.value if hasattr(c.status, "value") else str(c.status),
+                issue_date=c.issue_date,
+            )
+            for c in credits
         ],
     )
 

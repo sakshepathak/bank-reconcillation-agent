@@ -84,6 +84,18 @@ class ContactDocSummary(BaseModel):
     status: str
 
 
+class ContactCreditSummary(BaseModel):
+    """A held credit shown on the Contact detail page's 'Credits on account' card."""
+    id: int
+    kind: str                # overpayment | prepayment
+    direction: str           # payable | receivable
+    currency: str
+    original_amount: float
+    outstanding: float
+    status: str              # awaiting_payment | paid | voided
+    issue_date: str
+
+
 # ContactDetailResponse is defined further down — after AliasResponse — so the
 # `aliases: list[AliasResponse]` field resolves cleanly without forward refs.
 
@@ -168,6 +180,7 @@ class ContactDetailResponse(BaseModel):
     invoices: list[ContactDocSummary]
     bills: list[ContactDocSummary]
     aliases: list[AliasResponse]
+    credits: list[ContactCreditSummary] = []
 
 
 class ContactPaymentTimingResponse(BaseModel):
