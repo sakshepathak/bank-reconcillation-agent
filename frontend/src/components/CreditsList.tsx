@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ToastProvider'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
-import type { Credit, CreditDirection, Bill, Invoice } from '@/types'
+import type { Credit, CreditDirection, CreditTarget } from '@/types'
 
 const KIND_LABEL: Record<Credit['kind'], string> = {
   overpayment: 'Overpayment',
@@ -113,27 +113,21 @@ function AllocateDialog({
   const docPath = direction === 'payable' ? 'bills' : 'invoices'
   const targetType = direction === 'payable' ? 'bill' : 'invoice'
 
-  const { data: docs } = useQuery<(Bill | Invoice)[]>({
-    queryKey: [docPath],
-    queryFn: () => api.get(`/${docPath}/`).then((r) => r.data),
+  // The backend is the single source of truth for which documents this credit
+  // can be applied to (same contact — by id OR name, same currency, open, owing).
+  // We render exactly that list rather than re-deriving eligibility here.
+  const { data: targets, isLoading } = useQuery<CreditTarget[]>({
+    queryKey: ['credit-targets', credit.id],
+    queryFn: () => api.get(`/credits/${credit.id}/targets`).then((r) => r.data),
   })
-
-  // Only this contact's open documents, same currency, with something owing.
-  const open = (docs ?? []).filter(
-    (d) =>
-      d.contact_id === credit.contact_id &&
-      d.currency === credit.currency &&
-      d.outstanding > 0.005 &&
-      d.status !== 'paid' &&
-      d.status !== 'voided',
-  )
+  const open = targets ?? []
 
   const [targetId, setTargetId] = useState<number | null>(null)
   const [amount, setAmount] = useState('')
   const target = open.find((d) => d.id === targetId) ?? null
   const maxAmount = target ? Math.min(credit.outstanding, target.outstanding) : credit.outstanding
 
-  const pick = (d: Bill | Invoice) => {
+  const pick = (d: CreditTarget) => {
     setTargetId(d.id)
     setAmount(Math.min(credit.outstanding, d.outstanding).toFixed(2))
   }
@@ -146,6 +140,7 @@ function AllocateDialog({
     onSuccess: () => {
       toast(`Applied ${formatCurrency(parseFloat(amount), credit.currency)} of credit`)
       qc.invalidateQueries({ queryKey: ['credits'] })
+      qc.invalidateQueries({ queryKey: ['credit-targets'] })
       qc.invalidateQueries({ queryKey: [docPath] })
       onClose()
     },
@@ -174,7 +169,11 @@ function AllocateDialog({
               </button>
             </div>
 
-            {!open.length ? (
+            {isLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : !open.length ? (
               <p className="text-sm text-muted-foreground py-6 text-center">
                 No open {targetType}s for {credit.contact_name} in {credit.currency} to apply this credit to.
               </p>

@@ -38,6 +38,7 @@ from api.schemas.models import (
     ReconciledLineResponse, UnreconcileResult, BookCreditRequest,
 )
 from api.deps import get_db, get_current_org_id, require_user
+from engine.contacts import upsert_contact
 from engine.bank_statement_parser import parse_bank_statement
 from engine.vendor_matching.matcher import find_matches as match_vendors
 from engine.vendor_matching.normalizer import canonicalize
@@ -1391,7 +1392,7 @@ def book_credit(
     line_amount = round(s.spent if is_out else s.received, 2)
 
     acc = db.get(BankAccount, s.bank_account_id)
-    currency = acc.currency if acc else "GBP"
+    currency = (acc.currency if acc else "GBP").strip().upper()
     now = _now()
 
     settled: list[dict] = []
@@ -1438,6 +1439,13 @@ def book_credit(
             c = db.get(Contact, contact_id)
             if c and c.org_id == org_id:
                 contact_name = c.full_name
+        elif not contact_id and contact_name:
+            # Resolve the typed name to a real contact (find-or-create), exactly as
+            # the bill/invoice routers do. Without this the credit would be saved
+            # with contact_id=None and could never be matched to that vendor's
+            # bills/invoices when allocating it later.
+            ctype = "supplier" if is_out else "customer"
+            contact_id = upsert_contact(db, org_id=org_id, name=contact_name, contact_type=ctype).id
         credit_amount = line_amount
 
     credit = CreditNote(

@@ -543,6 +543,24 @@ class AllocateCreditRequest(BaseModel):
     amount: float
 
 
+class CreditTargetResponse(BaseModel):
+    """An open bill/invoice a held credit may be allocated to. Returned by
+    GET /credits/{id}/targets — the backend is the single source of truth for
+    eligibility, so the UI renders exactly what allocate_credit would accept."""
+    target_type: str                         # "bill" | "invoice"
+    id: int
+    number: Optional[str]
+    contact_id: Optional[int]
+    contact_name: str
+    issue_date: str
+    due_date: Optional[str]
+    total: float
+    paid_amount: float
+    outstanding: float                       # total - paid_amount
+    currency: str
+    status: str
+
+
 class CreditAllocationResponse(BaseModel):
     id: int
     target_type: str

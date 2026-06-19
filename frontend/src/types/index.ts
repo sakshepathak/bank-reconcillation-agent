@@ -115,6 +115,23 @@ export interface CreditAllocation {
   created_at: string
 }
 
+// An open bill/invoice a credit may be applied to — the backend (GET
+// /credits/{id}/targets) decides eligibility, so the dialog never re-derives it.
+export interface CreditTarget {
+  target_type: string          // 'bill' | 'invoice'
+  id: number
+  number: string | null
+  contact_id: number | null
+  contact_name: string
+  issue_date: string
+  due_date: string | null
+  total: number
+  paid_amount: number
+  outstanding: number
+  currency: string
+  status: DocumentStatus
+}
+
 export interface Credit {
   id: number
   contact_id: number | null

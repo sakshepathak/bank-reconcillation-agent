@@ -22,8 +22,10 @@ from memory.models import (
 )
 from api.schemas.models import (
     CreditResponse, CreditAllocationResponse, AllocateCreditRequest,
+    CreditTargetResponse,
 )
 from api.deps import get_db, get_current_org_id, require_user
+from engine.contacts import _normalize as _normalize_name
 
 router = APIRouter(prefix="/credits", tags=["credits"])
 
@@ -38,6 +40,43 @@ def _outstanding(cn: CreditNote) -> float:
 
 def _enum(v) -> str:
     return v.value if hasattr(v, "value") else str(v)
+
+
+def _norm_ccy(c: str | None) -> str:
+    """Currency codes compare case-/whitespace-insensitively ('gbp' == ' GBP ')."""
+    return (c or "").strip().upper()
+
+
+def _same_vendor(cn: CreditNote, doc) -> bool:
+    """
+    Does this credit belong to the same contact as this bill/invoice?
+
+    The single source of truth for "same vendor", shared by the eligible-targets
+    listing and allocate_credit so the UI can never offer a document the POST
+    would reject (and vice-versa). Prefer contact_id when BOTH sides have one;
+    otherwise — or when the ids differ but the names match (duplicate contact
+    rows for one vendor, or a credit booked by name with no id) — fall back to a
+    normalized-name match. This is the same identity rule the matcher uses
+    elsewhere (see statement_lines._vendor_key_parts).
+    """
+    doc_cid = getattr(doc, "contact_id", None)
+    if cn.contact_id is not None and doc_cid is not None and cn.contact_id == doc_cid:
+        return True
+    cn_name = _normalize_name(cn.contact_name or "")
+    doc_name = _normalize_name(getattr(doc, "contact_name", "") or "")
+    return bool(cn_name) and cn_name == doc_name
+
+
+def _is_allocatable(cn: CreditNote, doc) -> bool:
+    """Every rule allocate_credit enforces, in one place: open status, something
+    owing, currency match, same vendor. Amount caps are checked per-request."""
+    if doc.status in (DocumentStatus.PAID, DocumentStatus.VOIDED):
+        return False
+    if round(doc.total - doc.paid_amount, 2) <= 0.005:
+        return False
+    if _norm_ccy(cn.currency) != _norm_ccy(doc.currency):
+        return False
+    return _same_vendor(cn, doc)
 
 
 def _load_credit_for_org(db: Session, credit_id: int, org_id: int) -> CreditNote:
@@ -193,6 +232,52 @@ def get_credit(
     return _to_resp(db, org_id, _load_credit_for_org(db, credit_id, org_id))
 
 
+@router.get("/{credit_id}/targets", response_model=list[CreditTargetResponse])
+def list_credit_targets(
+    credit_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+):
+    """
+    Every open bill/invoice this credit can be applied to — the exact set
+    allocate_credit would accept, computed by the SAME rules (_is_allocatable).
+    The Allocate dialog renders this directly instead of re-deriving eligibility
+    client-side, so the two can never disagree. A voided or fully-allocated
+    credit has no targets (empty list).
+    """
+    cn = _load_credit_for_org(db, credit_id, org_id)
+    if cn.status == DocumentStatus.VOIDED or _outstanding(cn) <= 0.005:
+        return []
+
+    # A payable (supplier) credit applies to bills; a receivable to invoices.
+    is_payable = cn.direction == CreditDirection.PAYABLE
+    Model = Bill if is_payable else Invoice
+    want = "bill" if is_payable else "invoice"
+
+    docs = db.exec(select(Model).where(Model.org_id == org_id)).all()
+    targets = [
+        CreditTargetResponse(
+            target_type=want,
+            id=d.id,
+            number=d.number,
+            contact_id=d.contact_id,
+            contact_name=d.contact_name,
+            issue_date=d.issue_date,
+            due_date=d.due_date,
+            total=round(d.total, 2),
+            paid_amount=round(d.paid_amount, 2),
+            outstanding=round(d.total - d.paid_amount, 2),
+            currency=d.currency,
+            status=_enum(d.status),
+        )
+        for d in docs
+        if _is_allocatable(cn, d)
+    ]
+    # Oldest first — you typically clear the longest-owing document first.
+    targets.sort(key=lambda t: (t.issue_date or "", t.id))
+    return targets
+
+
 # ── Allocate / remove ────────────────────────────────────────────────────────
 
 @router.post("/{credit_id}/allocate", response_model=CreditResponse)
@@ -231,12 +316,12 @@ def allocate_credit(
         raise HTTPException(status_code=404, detail=f"{want.capitalize()} not found")
     if target.status in (DocumentStatus.PAID, DocumentStatus.VOIDED):
         raise HTTPException(status_code=409, detail=f"{want.capitalize()} is not open for payment")
-    if cn.currency != target.currency:
+    if _norm_ccy(cn.currency) != _norm_ccy(target.currency):
         raise HTTPException(
             status_code=422,
             detail=f"Cannot apply a {cn.currency} credit to a {target.currency} {want} — currencies must match",
         )
-    if (cn.contact_id and target.contact_id and cn.contact_id != target.contact_id):
+    if not _same_vendor(cn, target):
         raise HTTPException(status_code=422, detail=f"That {want} belongs to a different contact")
 
     target_outstanding = round(target.total - target.paid_amount, 2)
