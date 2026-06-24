@@ -201,10 +201,10 @@ export default function Dashboard() {
   const currency = accts[0]?.currency ?? 'GBP'
 
   return (
-    <div className="space-y-8 animate-in fade-in-0 duration-300">
+    <div className="space-y-5 animate-in fade-in-0 duration-300">
       {/* Greeting */}
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-foreground">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
           {greeting()}{firstName ? `, ${firstName}` : ''}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">

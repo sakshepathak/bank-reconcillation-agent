@@ -299,11 +299,11 @@ export default function Purchases() {
   const canSave = form.contact_name.trim() && lines.some((l) => l.description.trim())
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold">Purchases</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Purchases</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Bills received from suppliers — money owed by you.
           </p>

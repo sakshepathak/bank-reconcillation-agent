@@ -12,6 +12,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { PageHeader } from '@/components/ui/page-header'
+import { StatStrip } from '@/components/ui/stat-strip'
 import { cn, formatCurrency } from '@/lib/utils'
 
 const PAGE_SIZE = 50
@@ -147,34 +149,28 @@ export default function AuditTrail() {
   const adjustments = sum('create_entry', 'transfer', 'discuss')
 
   return (
-    <div className="space-y-6 animate-in fade-in-0 duration-300">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary-subtle text-primary flex items-center justify-center flex-shrink-0">
-            <ScrollText className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-[22px] font-semibold tracking-tight text-foreground">Audit Trail</h1>
-            <p className="text-sm text-muted-foreground">
-              An immutable record of every reconciliation decision — who did what, when, and why.
-            </p>
-          </div>
-        </div>
-        <Button variant="outline" size="sm" onClick={handleExport} disabled={!summary?.total}>
-          <Download className="w-4 h-4 mr-1.5" />
-          Export CSV
-        </Button>
-      </div>
+    <div className="space-y-5 animate-in fade-in-0 duration-300">
+      <PageHeader
+        icon={ScrollText}
+        title="Audit Trail"
+        subtitle="An immutable record of every reconciliation decision — who did what, when, and why."
+        actions={
+          <Button variant="outline" size="sm" onClick={handleExport} disabled={!summary?.total}>
+            <Download className="w-4 h-4 mr-1.5" />
+            Export CSV
+          </Button>
+        }
+      />
 
-      {/* Summary KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard icon={Activity} label="Total events" value={summary?.total ?? 0} accent />
-        <KpiCard icon={CheckCircle2} label="Matches" value={matched} />
-        <KpiCard icon={Undo2} label="Reversals" value={reversed} />
-        <KpiCard icon={Clock} label="Last activity" value={summary?.last_at ? formatDay(summary.last_at) : '—'} small
-          sub={adjustments > 0 ? `${adjustments} adjustments` : undefined} />
-      </div>
+      <StatStrip
+        stats={[
+          { label: 'Total events', value: summary?.total ?? 0, icon: Activity, accent: (summary?.total ?? 0) > 0 },
+          { label: 'Matches', value: matched, icon: CheckCircle2 },
+          { label: 'Reversals', value: reversed, icon: Undo2 },
+          { label: 'Last activity', value: summary?.last_at ? formatDay(summary.last_at) : '—', icon: Clock,
+            sub: adjustments > 0 ? `${adjustments} adjustments` : undefined },
+        ]}
+      />
 
       {/* Filter bar */}
       <Card>
@@ -293,33 +289,6 @@ export default function AuditTrail() {
 }
 
 // ── Pieces ────────────────────────────────────────────────────────────────
-
-function KpiCard({
-  icon: Icon, label, value, sub, accent, small,
-}: {
-  icon: React.ElementType
-  label: string
-  value: string | number
-  sub?: string
-  accent?: boolean
-  small?: boolean
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-          <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center',
-            accent ? 'bg-primary-subtle text-primary' : 'bg-muted text-muted-foreground')}>
-            <Icon className="w-4 h-4" />
-          </div>
-        </div>
-        <p className={cn('font-semibold text-foreground mt-2', small ? 'text-base' : 'text-2xl')}>{value}</p>
-        {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
-      </CardContent>
-    </Card>
-  )
-}
 
 function EventRow({ e, open, onToggle }: { e: AuditEvent; open: boolean; onToggle: () => void }) {
   const meta = actionMeta(e.action)

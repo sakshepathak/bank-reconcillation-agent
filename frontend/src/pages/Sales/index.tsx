@@ -307,11 +307,11 @@ export default function Sales() {
     form.number.trim() && form.contact_name.trim() && lines.some((l) => l.description.trim())
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold">Sales</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Sales</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Invoices issued to customers — money owed to you.
           </p>
