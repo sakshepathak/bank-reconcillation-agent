@@ -180,6 +180,144 @@ files that no longer exist.
 
 ---
 
+### 2026-06-24 — UI polish: keep the cream, soften the blue, sharpen the nav
+
+**What we did (plain English).** Made the app feel a little more polished *without* changing the
+cream colour scheme you like. The blue was toned down (it read a touch loud against the cream), the
+left-hand menu was reorganised into clear groups with **Reconcile pinned at the top showing a live
+count** of items still to reconcile, and the typeface was switched to **Inter** (a cleaner, more
+standard font for dense financial tools).
+
+**Why it mattered.** A redesign brief proposed a full black/white "professional" repaint. After a
+parallel feasibility review we judged that a half-finished repaint would look *worse* than the
+current coherent cream theme — and you confirmed you want to keep the cream. So we kept your palette
+and took only the safe, colour-neutral wins.
+
+**Under the hood.**
+- **Cream preserved:** reverted the earlier border / corner-radius / shadow experiments back to the
+  warm "Parchment & Marine" values. Only the blue changed.
+- **Blue softened:** `--primary` saturation 72% → 50% (same lightness, so white button text stays
+  legible); sidebar gradient end `hsl(216 75% 34%)` → `hsl(216 50% 38%)`. One token recolours every
+  blue element consistently.
+- **Font:** Tailwind `sans` Outfit → Inter (+ the Google-Fonts import). Reversible in one line.
+- **Sidebar** (`Sidebar.tsx`): nav regrouped into **Work / Reference / Admin**; Reconcile first with
+  a pending badge that reuses the existing `['bank-accounts']` query (sum of `pending_count`) — zero
+  backend change.
+- **Verified:** `npm run build` green (1810 modules). **Deliberately NOT done** (higher-risk the
+  night before a demo, parked for later): the full palette swap, removing red/green from money
+  amounts, the Reconcile tab-relocation, and the Bank-Accounts table rebuild.
+
+---
+
+### 2026-06-24 — Reconcile page: compact (dense) view + fully-green confident matches
+
+**What we did (plain English).** Made the Reconcile screen fit many more lines at once, like Xero.
+Rows are **compact by default** with smaller text; a **toggle** (top-right of the list, "Expand" /
+"Compact") flips back to the larger card view, and the app **remembers your choice**. And when a
+suggested match is **very confident (over 90%)**, the **matched invoice/bill block** turns **green**
+— your cue that it's safe to approve without reading carefully.
+
+**Under the hood.**
+- `ReconcileForAccount`: added a `compact` state (persisted in `localStorage['reconcile-compact']`,
+  default on) + a toggle button beside the sort control; threaded `compact` into each `ReconcileRow`.
+- `ReconcileRow`: density is class-conditional on `compact` (tab strip `py-0.5`, panes `py-1.5`,
+  description `text-xs`, amount `text-sm` vs the roomy originals); inter-row gap tightens too.
+- **Green confident match:** only the **matched invoice/bill block** turns green (`bg-emerald-50
+  border-emerald-400`) at ≥90% — the first attempt greened the *whole card*, which looked too heavy,
+  so it's confined to the block. Green stays the single accent; the cream theme is untouched.
+- **OK button inlined + tighter:** OK moved *inside* the match block (stacked under the confidence
+  score) instead of its own row; gaps/padding reduced — each card is shorter, less blank space.
+- **Create tab condensed (Who/What/Why):** was three rows → now two — Who | What on row 1, then
+  Why + VAT + Create together on row 2; inputs shrunk to `h-7`.
+- **"How was this matched?" moved bottom-right:** it now shares one row with the "N more
+  suggestions" link (suggestions left, trace-trigger right) instead of taking its own row. Its open
+  state was lifted into `MatchTab`; the trace renders full-width below. Saves another row per card.
+- Verified: `npm run build` green (1810 modules).
+
+---
+
+### 2026-06-25 — Sidebar: collapsible icon rail (hover-expand + pin), push layout
+
+**What we did (plain English).** The left menu is now a slim **icon-only strip** by default, giving
+the work area more width. **Hovering slides it open** to show labels, group headings, the org name
+and the pending count; move away and it slides back. When it opens, the **page content slides right
+to make room** (preferred over the menu floating on top). A small **pin button** locks it open for
+anyone who dislikes pure hover. The scrollbar — previously a cream colour that looked off — is now a
+soft on-brand blue.
+
+**Under the hood.**
+- The `<aside>` is a real flex item: `w-16 → hover:w-56`, so widening it **pushes** the content
+  (`flex-1`) right; the width transition (200ms ease-out) animates the shift. Collapsed = 64px,
+  expanded = 224px.
+- **Pin:** a `pinned` state (persisted in `localStorage['sidebar-pinned']`) forces `w-56` and sets
+  `data-pinned="true"` on the aside. All reveals key off `group-hover` **OR**
+  `group-data-[pinned=true]`, so labels stay shown when pinned (not only on hover).
+- Labels / group headers / user info share an `opacity-0 → opacity-100` reveal; `overflow-hidden`
+  clips them when collapsed.
+- Collapsed, the Reconcile icon carries a small **amber dot** when there's pending work; expanded,
+  the full numbered badge shows instead.
+- **Org switcher fix:** its name + the `<>` chevron are hidden when collapsed (they were overlapping
+  the building icon) and reappear when expanded. Its dropdown is a Radix portal, so never clipped.
+- **Scrollbars:** global thumb → `hsl(216 28% 80%)` (blue) + Firefox `scrollbar-color`; the blue
+  sidebar gets a translucent-white thumb (`.sidebar-scroll`) so it stays visible on the gradient.
+- Hover-expand is desktop-only (no hover on touch) — pin is the touch-friendly fallback.
+- Verified: `npm run build` green (1810 modules).
+
+---
+
+### 2026-06-25 — Reconcile landing: a real overview instead of an empty screen
+
+**What we did (plain English).** The Reconcile landing page (before you pick an account) looked
+bare — a single small card stranded on a big empty canvas. It's now a proper **overview**: a row of
+summary figures across the top and your bank accounts as full-width rows (balances + difference + a
+Reconcile button). The screen now reads like real accounting software. *(A "Recent activity" side
+panel was tried and then removed on 2026-06-25 — it looked visually off; the accounts list is
+full-width instead.)*
+
+**Under the hood.**
+- New `ReconcileOverview` component (replaces the old account-picker grid) in `Reconciliation/index.tsx`.
+- **Summary band:** Lines to reconcile · Out of balance · Bank accounts (+ reconciled count) · Last
+  import — all derived from the existing `/bank-accounts` payload, so **no backend change**.
+- **Account rows:** full-width `AccountRow` — Statement / OOO / Difference columns, a pending badge,
+  and a prominent "Reconcile →" button. One account now fills the width instead of looking lost.
+- **Recent activity:** reads the existing audit log (`GET /audit/?limit=8`); each row shows the
+  action (colour-dotted), the target, description, amount and time. Tidy empty-state if there's none.
+- Always shows the overview (no auto-skip), per the chosen option.
+- Verified: `npm run build` green (1810 modules).
+
+---
+
+### 2026-06-25 — App-wide consistency pass (the 6 demo-critical pages)
+
+**What we did (plain English).** The app looked inconsistent — different heading sizes on different
+pages, uneven spacing, and single numbers floating in their own rounded cards ("children's book").
+We defined **one house style** and applied it to the six demo pages so they share the same font
+sizes, spacing, and a unified, grown-up look. (Audited every page first to standardise to what was
+already most common — least churn.)
+
+**The house style (cream theme untouched):**
+- **Page title** — `text-2xl font-semibold tracking-tight` everywhere (was a mix of `text-xl bold`,
+  `text-[22px]`, `text-2xl bold`).
+- **Metrics** — one **StatStrip**: a single bordered bar with divided cells, every value at the same
+  size (`text-lg`). Replaces the separate KPI cards.
+- **Card padding** `p-4`, **page rhythm** `space-y-5`, one figure size.
+
+**Under the hood.**
+- New shared primitives so consistency is automatic + future-proof: `components/ui/page-header.tsx`
+  (`PageHeader`) and `components/ui/stat-strip.tsx` (`StatStrip`).
+- **Reconcile overview** & **Audit Trail:** KPI cards → `StatStrip`; header → `PageHeader`; deleted
+  the old per-page `StatTile` / `KpiCard` components.
+- **Sales / Purchases / Bank Accounts:** title → text-2xl semibold, rhythm → space-y-5; Bank
+  Accounts card `p-5→p-4` and balance figures `text-xl→text-lg`.
+- **Dashboard:** title → text-2xl, rhythm `space-y-8→space-y-5` (its metrics were already grouped at
+  the right size, so minimal change).
+- **Scope:** the 6 demo-critical pages only. The other 6 (Contacts, Settings, Review Queue, Aliases,
+  Pipeline, Assistant) still use the old styling — bring them in line after the demo with the same
+  two primitives.
+- Verified: `npm run build` green (1812 modules).
+
+---
+
 ## 5. Known things to watch (for the demo)
 
 - **Two terminals must stay open** (backend + frontend). If the screen suddenly shows errors,
