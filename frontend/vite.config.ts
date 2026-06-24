@@ -10,9 +10,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // All /api requests forwarded to FastAPI — no CORS issues in dev
+      // All /api requests forwarded to FastAPI — no CORS issues in dev.
+      // Honors VITE_API_TARGET (see README); defaults to 8765 because Hyper-V
+      // reserves 8000/8001 on Windows, so the backend runs on 8765.
       '/api': {
-        target: 'http://localhost:8000',
+        target: process.env.VITE_API_TARGET || 'http://localhost:8765',
         changeOrigin: true,
       },
     },
