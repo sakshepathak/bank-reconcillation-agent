@@ -1,75 +1,167 @@
 import { NavLink } from 'react-router-dom'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   LayoutDashboard, RefreshCw, AlertTriangle, Receipt, FileSpreadsheet,
-  Landmark, Users, FileText, BookOpen, Settings, LogOut, Sparkles, Workflow,
+  Landmark, Users, FileText, BookOpen, Settings, LogOut, Sparkles, Workflow, Pin, PinOff,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
+import type { BankAccount } from '@/types'
 import OrgSwitcher from '@/components/OrgSwitcher'
 
-const NAV = [
-  { to: '/dashboard',       icon: LayoutDashboard,  label: 'Dashboard' },
-  { to: '/sales',           icon: Receipt,          label: 'Sales' },
-  { to: '/purchases',       icon: FileSpreadsheet,  label: 'Purchases' },
-  { to: '/bank-accounts',   icon: Landmark,         label: 'Bank Accounts' },
-  { to: '/reconciliation',  icon: RefreshCw,        label: 'Reconcile' },
-  { to: '/pipeline',        icon: Workflow,         label: 'Pipeline Run' },
-  { to: '/assistant',       icon: Sparkles,         label: 'Assistant' },
-  { to: '/exceptions',      icon: AlertTriangle,    label: 'Exceptions' },
-  { to: '/contacts',        icon: Users,            label: 'Contacts' },
-  { to: '/audit',           icon: FileText,         label: 'Audit Trail' },
-  { to: '/aliases',         icon: BookOpen,         label: 'Vendor Aliases' },
-  { to: '/settings',        icon: Settings,         label: 'Settings' },
+type NavItem = { to: string; icon: typeof LayoutDashboard; label: string; badge?: boolean }
+
+// Grouped nav — Work first (Reconcile at the very top with a pending badge),
+// then Reference, then Admin.
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: 'Work',
+    items: [
+      { to: '/reconciliation', icon: RefreshCw,       label: 'Reconcile', badge: true },
+      { to: '/bank-accounts',  icon: Landmark,        label: 'Bank Accounts' },
+      { to: '/sales',          icon: Receipt,         label: 'Sales' },
+      { to: '/purchases',      icon: FileSpreadsheet, label: 'Purchases' },
+      { to: '/pipeline',       icon: Workflow,        label: 'Pipeline Run' },
+      { to: '/exceptions',     icon: AlertTriangle,   label: 'Exceptions' },
+    ],
+  },
+  {
+    label: 'Reference',
+    items: [
+      { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+      { to: '/contacts',  icon: Users,           label: 'Contacts' },
+      { to: '/aliases',   icon: BookOpen,        label: 'Vendor Aliases' },
+      { to: '/audit',     icon: FileText,        label: 'Audit Trail' },
+      { to: '/assistant', icon: Sparkles,        label: 'Assistant' },
+    ],
+  },
+  {
+    label: 'Admin',
+    items: [
+      { to: '/settings', icon: Settings, label: 'Settings' },
+    ],
+  },
 ]
+
+// Reveal text/badges only when the rail is EXPANDED — either hovered, or pinned
+// open (the aside carries data-pinned="true"). Collapsed: faded out + clipped.
+const REVEAL =
+  'whitespace-nowrap opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-data-[pinned=true]:opacity-100'
 
 export default function Sidebar() {
   const { user, logout } = useAuth()
 
+  // Pin = lock the rail open (persisted). Unpinned, it auto-collapses to icons
+  // and expands on hover.
+  const [pinned, setPinned] = useState<boolean>(() => {
+    try { return localStorage.getItem('sidebar-pinned') === 'true' } catch { return false }
+  })
+  const togglePin = () =>
+    setPinned((p) => {
+      const next = !p
+      try { localStorage.setItem('sidebar-pinned', String(next)) } catch { /* ignore */ }
+      return next
+    })
+
+  // Pending items still to reconcile — shares the ['bank-accounts'] cache with
+  // Dashboard, so it's a free read; no backend change.
+  const { data: accounts } = useQuery<BankAccount[]>({
+    queryKey: ['bank-accounts'],
+    queryFn: () => api.get('/bank-accounts/').then((r) => r.data),
+  })
+  const pendingTotal = (accounts ?? []).reduce((s, a) => s + (a.pending_count || 0), 0)
+
   return (
-    <aside className="w-56 h-full flex-shrink-0 flex flex-col bg-gradient-to-b from-primary to-[hsl(216_75%_34%)] shadow-xl">
-      {/* Brand */}
-      <div className="px-5 py-4 border-b border-white/15">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-lg bg-white/15 flex items-center justify-center">
-            <span className="text-white font-black text-base tracking-tight">OOO</span>
-          </div>
-          <div className="leading-tight">
-            <p className="text-white font-semibold text-sm">OOO</p>
-            <p className="text-white/60 text-[10px]">Bank Reconciliation</p>
-          </div>
+    // A real flex item (not an overlay): when it widens, the page content is
+    // PUSHED right. Collapsed 64px → expands to 224px on hover, or stays open
+    // when pinned. data-pinned drives the expanded reveals + width.
+    <aside
+      data-pinned={pinned ? 'true' : 'false'}
+      className={cn(
+        'group flex flex-col flex-shrink-0 overflow-hidden shadow-xl',
+        'bg-gradient-to-b from-primary to-[hsl(216_50%_38%)]',
+        'transition-[width] duration-200 ease-out',
+        pinned ? 'w-56' : 'w-16 hover:w-56',
+      )}
+    >
+      {/* Brand + pin toggle */}
+      <div className="flex items-center gap-2.5 px-3 py-4 border-b border-white/15">
+        <div className="w-9 h-9 rounded-lg bg-white/15 flex items-center justify-center flex-shrink-0">
+          <span className="text-white font-black text-base tracking-tight">OOO</span>
         </div>
+        <div className={cn('leading-tight min-w-0', REVEAL)}>
+          <p className="text-white font-semibold text-sm">OOO</p>
+          <p className="text-white/60 text-[10px]">Bank Reconciliation</p>
+        </div>
+        <button
+          type="button"
+          onClick={togglePin}
+          title={pinned ? 'Unpin — let the sidebar auto-collapse' : 'Pin the sidebar open'}
+          className={cn(
+            'ml-auto flex-shrink-0 rounded p-1 text-white/70 hover:text-white hover:bg-white/10 transition-colors',
+            REVEAL,
+          )}
+        >
+          {pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+        </button>
       </div>
 
-      {/* Org switcher */}
+      {/* Org switcher (collapses to its building icon; full switcher when expanded) */}
       <div className="px-3 pt-3 pb-1">
         <OrgSwitcher />
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 p-2.5 space-y-0.5 overflow-y-auto">
-        {NAV.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150',
-                isActive
-                  ? 'bg-white/20 text-white shadow-sm'
-                  : 'text-white/65 hover:bg-white/10 hover:text-white',
-              )
-            }
-          >
-            <Icon className="w-4 h-4 flex-shrink-0" />
-            {label}
-          </NavLink>
+      <nav className="sidebar-scroll flex-1 px-2.5 py-2 overflow-y-auto overflow-x-hidden">
+        {NAV_GROUPS.map((group) => (
+          <div key={group.label} className="mb-3">
+            <p className={cn('px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/40', REVEAL)}>
+              {group.label}
+            </p>
+            <div className="space-y-0.5">
+              {group.items.map(({ to, icon: Icon, label, badge }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  title={label}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-150',
+                      isActive
+                        ? 'bg-white/20 text-white'
+                        : 'text-white/65 hover:bg-white/10 hover:text-white',
+                    )
+                  }
+                >
+                  <span className="relative flex-shrink-0">
+                    <Icon className="w-4 h-4" />
+                    {/* collapsed-state pending cue: a small dot on the icon */}
+                    {badge && pendingTotal > 0 && (
+                      <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400 group-hover:hidden group-data-[pinned=true]:hidden" />
+                    )}
+                  </span>
+                  <span className={cn('flex-1', REVEAL)}>{label}</span>
+                  {badge && pendingTotal > 0 && (
+                    <span className={cn(
+                      'min-w-[1.25rem] text-center rounded-full bg-white/25 text-white text-[10px] font-semibold leading-none px-1.5 py-1',
+                      REVEAL,
+                    )}>
+                      {pendingTotal}
+                    </span>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 
       {/* User + logout */}
       <div className="px-3 py-3 border-t border-white/10 space-y-2">
         {user && (
-          <div className="px-2 py-1">
+          <div className={cn('px-2 py-1 overflow-hidden', REVEAL)}>
             <p className="text-white text-sm font-medium truncate" title={user.name}>
               {user.name || 'User'}
             </p>
@@ -81,15 +173,16 @@ export default function Sidebar() {
         <button
           type="button"
           onClick={() => { logout().catch(() => { /* swallow — UI bounces to /login regardless */ }) }}
+          title="Logout"
           className={cn(
             'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium',
             'text-white/75 hover:bg-white/10 hover:text-white transition-colors',
           )}
         >
-          <LogOut className="w-4 h-4" />
-          Logout
+          <LogOut className="w-4 h-4 flex-shrink-0" />
+          <span className={REVEAL}>Logout</span>
         </button>
-        <p className="text-white/40 text-[10px] text-center pt-1">OOO · v1</p>
+        <p className={cn('text-white/40 text-[10px] text-center pt-1', REVEAL)}>OOO · v1</p>
       </div>
     </aside>
   )

@@ -49,9 +49,13 @@ export default function OrgSwitcher() {
         >
           <span className="flex items-center gap-2 min-w-0">
             <Building2 className="w-4 h-4 flex-shrink-0 text-indigo-600" />
-            <span className="truncate">{current?.name ?? 'No organization'}</span>
+            <span className="truncate hidden group-hover:inline group-data-[pinned=true]:inline">
+              {current?.name ?? 'No organization'}
+            </span>
           </span>
-          <ChevronsUpDown className="w-3.5 h-3.5 flex-shrink-0 text-indigo-500" />
+          {/* Hidden when the sidebar is collapsed (so it doesn't overlap the
+              building icon); shown when the rail is expanded by hover or pin. */}
+          <ChevronsUpDown className="w-3.5 h-3.5 flex-shrink-0 text-indigo-500 hidden group-hover:block group-data-[pinned=true]:block" />
         </button>
       </DropdownMenu.Trigger>
 
