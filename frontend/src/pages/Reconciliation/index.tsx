@@ -6,7 +6,8 @@ import { useConfirm } from '@/components/ConfirmProvider'
 import { useToast } from '@/components/ToastProvider'
 import {
   Check, ArrowRightLeft, MessageSquare, Plus, Sparkles,
-  Landmark, Loader2, ChevronDown, ChevronUp, ArrowDownUp,
+  Landmark, Loader2, ChevronDown, ChevronUp, ArrowDownUp, Rows3, LayoutList,
+  Scale, Clock, ArrowRight,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +17,8 @@ import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
+import { PageHeader } from '@/components/ui/page-header'
+import { StatStrip } from '@/components/ui/stat-strip'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import { viewFor, THRESHOLDS } from '@/lib/match'
 import { RotateCcw, CheckCircle2, AlertTriangle } from 'lucide-react'
@@ -53,7 +56,7 @@ interface BulkMatchData {
 type SubTab = 'match' | 'create' | 'credit' | 'transfer' | 'discuss'
 
 // Thresholds come from the central match module so UI + future logic stay in sync.
-const { HIGH, MID_LOW } = THRESHOLDS
+const { MID_LOW } = THRESHOLDS
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Top-level page
@@ -82,60 +85,11 @@ export default function Reconciliation() {
 
   if (!accountId) {
     return (
-      <div className="space-y-4">
-        <div>
-          <h1 className="text-xl font-bold">Reconcile</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Select a bank account to start reconciling.
-          </p>
-        </div>
-        {accountsLoading ? (
-          <Skeleton className="h-32 w-full" />
-        ) : !accounts?.length ? (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <Landmark className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-40" />
-              <p className="text-sm text-muted-foreground">
-                No bank accounts yet. Add one to start reconciling.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {accounts.map((a) => (
-              <button
-                key={a.id}
-                onClick={() => setSearchParams({ account: String(a.id) })}
-                className="text-left"
-              >
-                <Card className="hover:border-primary transition-colors">
-                  <CardContent className="p-3.5">
-                    <div className="flex items-start justify-between mb-1.5">
-                      <div className="min-w-0">
-                        <p className="font-semibold text-sm truncate">{a.name}</p>
-                        <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                          {a.bank_name && `${a.bank_name} · `}
-                          {a.account_number ?? 'No number'}
-                        </p>
-                      </div>
-                      {a.pending_count > 0 ? (
-                        <Badge variant="warning">{a.pending_count} pending</Badge>
-                      ) : (
-                        <Badge variant="success">Reconciled</Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Diff: <span className="font-mono font-medium text-foreground">
-                        {formatCurrency(a.balance_difference, a.currency)}
-                      </span>
-                    </p>
-                  </CardContent>
-                </Card>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <ReconcileOverview
+        accounts={accounts ?? []}
+        loading={accountsLoading}
+        onPick={(id) => setSearchParams({ account: String(id) })}
+      />
     )
   }
 
@@ -147,6 +101,117 @@ export default function Reconciliation() {
       linesLoading={linesLoading}
       accounts={accounts ?? []}
     />
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reconcile overview — the landing screen when no account is selected yet.
+// Summary band + rich, full-width account rows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ReconcileOverview({
+  accounts, loading, onPick,
+}: {
+  accounts: BankAccount[]
+  loading: boolean
+  onPick: (id: number) => void
+}) {
+  const totalPending = accounts.reduce((s, a) => s + (a.pending_count || 0), 0)
+  const outOfBalance = accounts.reduce((s, a) => s + Math.abs(a.balance_difference || 0), 0)
+  const reconciledCount = accounts.filter((a) => Math.abs(a.balance_difference || 0) < 0.01).length
+  const lastImport = accounts.reduce<string | null>(
+    (latest, a) => (a.last_imported_at && (!latest || a.last_imported_at > latest) ? a.last_imported_at : latest),
+    null,
+  )
+  const currency = accounts[0]?.currency ?? 'GBP'
+
+  return (
+    <div className="space-y-5 animate-in fade-in-0 duration-300">
+      <PageHeader
+        title="Reconcile"
+        subtitle="Pick an account to start matching its bank lines against your invoices and bills."
+      />
+
+      <StatStrip
+        stats={[
+          { label: 'Lines to reconcile', value: totalPending, icon: AlertTriangle, accent: totalPending > 0 },
+          { label: 'Out of balance', value: formatCurrency(outOfBalance, currency), icon: Scale },
+          { label: 'Bank accounts', value: accounts.length, icon: Landmark,
+            sub: accounts.length ? `${reconciledCount} reconciled` : undefined },
+          { label: 'Last import', value: lastImport ? formatDate(lastImport) : '—', icon: Clock },
+        ]}
+      />
+
+      <div className="space-y-2.5">
+        <h2 className="px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Your accounts</h2>
+        {loading ? (
+          <div className="space-y-2.5">
+            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
+          </div>
+        ) : accounts.length === 0 ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <Landmark className="w-8 h-8 text-muted-foreground mx-auto mb-3 opacity-40" />
+              <p className="text-sm text-muted-foreground">No bank accounts yet. Add one to start reconciling.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          accounts.map((a) => <AccountRow key={a.id} a={a} onPick={onPick} />)
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AccountRow({ a, onPick }: { a: BankAccount; onPick: (id: number) => void }) {
+  const reconciled = Math.abs(a.balance_difference) < 0.01
+  return (
+    <Card className="hover:border-primary/60 transition-colors">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-10 h-10 rounded-lg bg-primary-subtle text-primary flex items-center justify-center flex-shrink-0">
+              <Landmark className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-semibold text-sm truncate">{a.name}</p>
+              <p className="text-[11px] text-muted-foreground font-mono truncate">
+                {a.bank_name ? `${a.bank_name} · ` : ''}{a.account_number ?? 'No number'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-6 flex-shrink-0">
+            <Mini label="Statement" value={formatCurrency(a.statement_balance, a.currency)} />
+            <Mini label="OOO Balance" value={formatCurrency(a.ooo_balance, a.currency)} />
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Difference</p>
+              <p className={cn('text-sm font-bold font-mono', reconciled ? 'text-emerald-600' : 'text-foreground')}>
+                {formatCurrency(a.balance_difference, a.currency)}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 flex-shrink-0">
+            {a.pending_count > 0 ? (
+              <Badge variant="warning">{a.pending_count} pending</Badge>
+            ) : (
+              <Badge variant="success"><Check className="w-3 h-3 mr-1" />Reconciled</Badge>
+            )}
+            <Button size="sm" onClick={() => onPick(a.id)}>
+              Reconcile <ArrowRight className="w-3.5 h-3.5 ml-1" />
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function Mini({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="text-right">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-sm font-semibold font-mono text-foreground">{value}</p>
+    </div>
   )
 }
 
@@ -183,6 +248,18 @@ function ReconcileForAccount({
     () => [...lines].sort((a, b) => (sortDir === 'asc' ? 1 : -1) * a.date.localeCompare(b.date)),
     [lines, sortDir],
   )
+
+  // Compact (dense, Xero-style) vs expanded card view. Default to compact so the
+  // most lines fit on screen; the choice is remembered across sessions.
+  const [compact, setCompact] = useState<boolean>(() => {
+    try { return localStorage.getItem('reconcile-compact') !== 'false' } catch { return true }
+  })
+  const toggleCompact = () =>
+    setCompact((c) => {
+      const next = !c
+      try { localStorage.setItem('reconcile-compact', String(next)) } catch { /* ignore */ }
+      return next
+    })
 
   return (
     <div className="space-y-3">
@@ -298,25 +375,41 @@ function ReconcileForAccount({
             <p className="text-xs font-medium text-muted-foreground">
               {lines.length} pending line{lines.length === 1 ? '' : 's'}
             </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
-              title="Sort the lines by statement date"
-            >
-              <ArrowDownUp className="w-3.5 h-3.5 mr-1.5" />
-              {sortDir === 'asc' ? 'Oldest first' : 'Newest first'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleCompact}
+                title="Switch between compact (dense) and expanded card view"
+              >
+                {compact
+                  ? <LayoutList className="w-3.5 h-3.5 mr-1.5" />
+                  : <Rows3 className="w-3.5 h-3.5 mr-1.5" />}
+                {compact ? 'Expand' : 'Compact'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                title="Sort the lines by statement date"
+              >
+                <ArrowDownUp className="w-3.5 h-3.5 mr-1.5" />
+                {sortDir === 'asc' ? 'Oldest first' : 'Newest first'}
+              </Button>
+            </div>
           </div>
-          {sortedLines.map((line) => (
-            <ReconcileRow
-              key={line.id}
-              line={line}
-              accountId={accountId}
-              currency={account?.currency ?? 'GBP'}
-              otherAccounts={accounts.filter((a) => a.id !== accountId)}
-            />
-          ))}
+          <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
+            {sortedLines.map((line) => (
+              <ReconcileRow
+                key={line.id}
+                line={line}
+                accountId={accountId}
+                currency={account?.currency ?? 'GBP'}
+                otherAccounts={accounts.filter((a) => a.id !== accountId)}
+                compact={compact}
+              />
+            ))}
+          </div>
         </div>
       )}
         </>
@@ -386,12 +479,13 @@ function ProgressRing({ done, total, pct }: { done: number; total: number; pct: 
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ReconcileRow({
-  line, accountId, currency, otherAccounts,
+  line, accountId, currency, otherAccounts, compact,
 }: {
   line: StatementLine
   accountId: number
   currency: string
   otherAccounts: BankAccount[]
+  compact: boolean
 }) {
   const queryClient = useQueryClient()
   const isInflow = line.received > 0
@@ -432,27 +526,22 @@ function ReconcileRow({
     queryClient.invalidateQueries({ queryKey: ['bills'] })
   }
 
-  const topScore = suggestions?.[0]?.score ?? 0
-  const isExactCard = topScore >= HIGH    // whole-card green outline only at ≥90%
-
   return (
-    <Card
-      className={cn(
-        'transition-colors',
-        // green outline when there's an exact-quality top match AND user is on Match tab
-        activeTab === 'match' && isExactCard && 'border-emerald-300',
-      )}
-    >
+    <Card className="transition-colors">
       <CardContent className="p-0">
         {/* TOP STRIP: tabs + date */}
-        <div className="flex items-center justify-between px-3 py-1.5 border-b bg-muted/30">
+        <div className={cn(
+          'flex items-center justify-between border-b bg-muted/30',
+          compact ? 'px-2 py-0.5' : 'px-3 py-1.5',
+        )}>
           <div className="flex items-center gap-0.5">
             {(['match', 'create', 'credit', 'transfer', 'discuss'] as SubTab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
                 className={cn(
-                  'px-2.5 py-1 text-xs font-medium rounded transition-colors capitalize',
+                  'font-medium rounded transition-colors capitalize',
+                  compact ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs',
                   activeTab === t
                     ? 'bg-background text-foreground shadow-sm'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -478,8 +567,11 @@ function ReconcileRow({
         {/* SPLIT */}
         <div className="grid grid-cols-1 md:grid-cols-[minmax(220px,1fr)_1fr] gap-0">
           {/* LEFT: statement line */}
-          <div className="px-3 py-2.5 border-r min-w-0">
-            <p className="text-sm font-medium leading-tight break-words">{line.description}</p>
+          <div className={cn(
+            'border-r min-w-0',
+            compact ? 'px-2.5 py-1.5' : 'px-3 py-2.5',
+          )}>
+            <p className={cn('font-medium leading-tight break-words', compact ? 'text-xs' : 'text-sm')}>{line.description}</p>
             {line.reference && (
               <p className="text-[11px] text-muted-foreground font-mono mt-0.5">
                 Ref: {line.reference}
@@ -487,7 +579,8 @@ function ReconcileRow({
             )}
             <p
               className={cn(
-                'text-lg font-bold font-mono mt-1.5',
+                'font-bold font-mono',
+                compact ? 'text-sm mt-0.5' : 'text-lg mt-1.5',
                 isInflow ? 'text-emerald-700' : 'text-rose-700',
               )}
             >
@@ -499,7 +592,7 @@ function ReconcileRow({
           </div>
 
           {/* RIGHT: action */}
-          <div className="px-3 py-2.5 min-w-0">
+          <div className={cn('min-w-0', compact ? 'px-2.5 py-1.5' : 'px-3 py-2.5')}>
             {activeTab === 'match' && (
               <MatchTab
                 line={line}
@@ -547,6 +640,7 @@ function MatchTab({
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
+  const [explainOpen, setExplainOpen] = useState(false)
   const [bulkOpen, setBulkOpen] = useState(false)
   const confirm = useConfirm()
   const toast = useToast()
@@ -647,50 +741,83 @@ function MatchTab({
   const isLow = view ? view.strength === 'weak' : false
 
   return (
-    <div className="space-y-1.5">
-      {/* PRIMARY suggestion */}
+    <div className="space-y-1">
+      {/* PRIMARY suggestion — the matched invoice/bill block; turns green at ≥90%.
+          The OK button lives inside the block (under the score) to save a row. */}
       {selected && view && (
         <div className={cn(
-          'rounded-md border px-2.5 py-2 transition-colors',
-          isExact ? 'border-emerald-300 bg-emerald-50/40' : 'border-border bg-background',
+          'rounded-md border px-2.5 py-1.5 transition-colors',
+          isExact ? 'border-emerald-400 bg-emerald-50' : 'border-border bg-background',
         )}>
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start justify-between gap-2.5">
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="font-mono text-[11px] text-muted-foreground">{selected.label}</span>
                 <span className={cn(
                   'text-sm font-medium truncate',
-                  showFieldHl && view.fields.name && 'bg-emerald-50 text-emerald-900 rounded px-1',
+                  showFieldHl && view.fields.name && 'bg-emerald-100 text-emerald-900 rounded px-1',
                 )}>
                   {selected.contact_name}
                 </span>
               </div>
               <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-                <span className={cn(showFieldHl && view.fields.date && 'bg-emerald-50 text-emerald-900 rounded px-1')}>
+                <span className={cn(showFieldHl && view.fields.date && 'bg-emerald-100 text-emerald-900 rounded px-1')}>
                   {formatDate(selected.date)}
                 </span>
                 {' · '}
-                <span className={cn('font-mono', showFieldHl && view.fields.amount && 'bg-emerald-50 text-emerald-900 rounded px-1')}>
+                <span className={cn('font-mono', showFieldHl && view.fields.amount && 'bg-emerald-100 text-emerald-900 rounded px-1')}>
                   {formatCurrency(selected.amount, currency)}
                 </span>
                 {' · '}
                 <span>{view.reasonText}</span>
               </p>
+              {isLow && (
+                <p className="text-[11px] text-amber-700 mt-0.5">Low confidence — verify first</p>
+              )}
             </div>
-            <ConfidenceBadge score={selected.score} method={selected.method} />
+            <div className="flex flex-col items-end gap-1 flex-shrink-0">
+              <ConfidenceBadge score={selected.score} method={selected.method} />
+              <Button
+                size="sm"
+                className="h-6 px-3.5 text-xs"
+                variant={isExact ? 'default' : 'outline'}
+                onClick={handleMatch}
+                disabled={matchMutation.isPending}
+              >
+                {matchMutation.isPending
+                  ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />…</>
+                  : 'OK'}
+              </Button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Alternatives toggle */}
-      {suggestions.length > 1 && (
-        <button
-          onClick={() => setShowAll((v) => !v)}
-          className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
-        >
-          {showAll ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-          {showAll ? 'Hide alternatives' : `${suggestions.length - 1} more suggestion${suggestions.length > 2 ? 's' : ''}`}
-        </button>
+      {/* Footer row: "more suggestions" (left) + "How was this matched?" (right)
+          share ONE row to save vertical space; each expands its panel below. */}
+      {(suggestions.length > 1 || selected) && (
+        <div className="flex items-center justify-between gap-2">
+          {suggestions.length > 1 ? (
+            <button
+              onClick={() => setShowAll((v) => !v)}
+              className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              {showAll ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              {showAll ? 'Hide alternatives' : `${suggestions.length - 1} more suggestion${suggestions.length > 2 ? 's' : ''}`}
+            </button>
+          ) : (
+            <span />
+          )}
+          {selected && (
+            <button
+              onClick={() => setExplainOpen((v) => !v)}
+              className="text-[11px] text-muted-foreground hover:text-indigo-700 flex items-center gap-1"
+            >
+              How was this matched?
+              {explainOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+          )}
+        </div>
       )}
 
       {showAll && (
@@ -723,27 +850,8 @@ function MatchTab({
         </div>
       )}
 
-      {/* Single-match OK button — on an inferred match this pops the
-          "Remember this vendor?" dialog before committing. */}
-      {hasRegular && (
-        <div className="flex items-center gap-2 pt-0.5">
-          <Button size="sm" className="h-7 px-4 text-xs"
-            variant={isExact ? 'default' : 'outline'}
-            onClick={handleMatch}
-            disabled={!selected || matchMutation.isPending}
-          >
-            {matchMutation.isPending
-              ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Matching…</>
-              : <>OK</>}
-          </Button>
-          {isLow && (
-            <span className="text-[11px] text-amber-700">Low confidence — verify first</span>
-          )}
-        </div>
-      )}
-
-      {/* "How was this matched?" — step-by-step trace for the selected candidate */}
-      {selected && (
+      {/* Expanded trace for the selected candidate (toggled from the footer row) */}
+      {selected && explainOpen && (
         <ExplainPanel
           key={`${selected.type}-${selected.id}`}
           lineId={line.id}
@@ -1022,49 +1130,36 @@ function ScoreBar({ value, className }: { value: number; className?: string }) {
   )
 }
 
+// Content-only — the parent (MatchTab) owns the open state + the trigger (in the
+// footer row) and renders this panel below, full-width, only when expanded.
 function ExplainPanel({ lineId, docType, docId }: { lineId: number; docType: 'invoice' | 'bill'; docId: number }) {
-  const [open, setOpen] = useState(false)
-
   const { data: trace, isLoading } = useQuery<MatchTrace>({
     queryKey: ['explain', lineId, docType, docId],
     queryFn: () =>
       api
         .get(`/statement-lines/${lineId}/explain`, { params: { doc_type: docType, doc_id: docId } })
         .then((r) => r.data),
-    enabled: open,
     staleTime: 5 * 60 * 1000,
   })
 
   return (
-    <div className="pt-0.5">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="text-[11px] text-muted-foreground hover:text-indigo-700 flex items-center gap-1"
-      >
-        {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-        How was this matched?
-      </button>
-
-      {open && (
-        <div className="mt-1.5 rounded-md border bg-muted/20 p-2.5 space-y-2 text-[11px]">
-          {isLoading || !trace ? (
-            <div className="flex items-center gap-1.5 text-muted-foreground py-1">
-              <Loader2 className="w-3 h-3 animate-spin" /> Tracing the match…
-            </div>
-          ) : (
-            <>
-              {trace.steps.map((s) => (
-                <ExplainStep key={s.n} step={s} />
-              ))}
-              <div className="flex items-center justify-between border-t pt-1.5 mt-1">
-                <span className="font-medium text-foreground">Final score</span>
-                <span className="font-mono font-semibold text-indigo-700">
-                  {trace.final.score_pct}% · {trace.final.strength_label}
-                </span>
-              </div>
-            </>
-          )}
+    <div className="rounded-md border bg-muted/20 p-2.5 space-y-2 text-[11px]">
+      {isLoading || !trace ? (
+        <div className="flex items-center gap-1.5 text-muted-foreground py-1">
+          <Loader2 className="w-3 h-3 animate-spin" /> Tracing the match…
         </div>
+      ) : (
+        <>
+          {trace.steps.map((s) => (
+            <ExplainStep key={s.n} step={s} />
+          ))}
+          <div className="flex items-center justify-between border-t pt-1.5 mt-1">
+            <span className="font-medium text-foreground">Final score</span>
+            <span className="font-mono font-semibold text-indigo-700">
+              {trace.final.score_pct}% · {trace.final.strength_label}
+            </span>
+          </div>
+        </>
       )}
     </div>
   )
@@ -1201,48 +1296,50 @@ function CreateTab({
   })
 
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-2">
+    <div className="space-y-1.5">
+      {/* Who | What */}
+      <div className="grid grid-cols-2 gap-1.5">
         <Input
           value={form.contact_name}
           onChange={(e) => setForm((f) => ({ ...f, contact_name: e.target.value }))}
           placeholder={isInflow ? 'Payer' : 'Payee'}
-          className="h-8 text-xs"
+          className="h-7 text-xs"
         />
         <Input
           value={form.account_code}
           onChange={(e) => setForm((f) => ({ ...f, account_code: e.target.value }))}
           placeholder="Account (e.g. 5000)"
-          className="h-8 text-xs font-mono"
+          className="h-7 text-xs font-mono"
         />
       </div>
-      <Input
-        value={form.description}
-        onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-        placeholder="Description"
-        className="h-8 text-xs"
-      />
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-muted-foreground">VAT</span>
+      {/* Why + VAT + action on a single row to save vertical space */}
+      <div className="flex items-center gap-1.5">
+        <Input
+          value={form.description}
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          placeholder="Description"
+          className="h-7 text-xs flex-1 min-w-0"
+        />
+        <div className="flex items-center gap-1 flex-shrink-0">
           <Input
             type="number" min="0" max="100" step="1"
             value={form.tax_rate * 100}
             onChange={(e) => setForm((f) => ({ ...f, tax_rate: (parseFloat(e.target.value) || 0) / 100 }))}
-            className="h-7 w-16 text-xs text-right font-mono"
+            className="h-7 w-14 text-xs text-right font-mono"
+            title="VAT %"
           />
           <span className="text-[11px] text-muted-foreground">%</span>
         </div>
         <Button
           size="sm"
-          className="h-7 px-4 text-xs ml-auto"
+          className="h-7 px-3 text-xs flex-shrink-0"
           onClick={() => createMutation.mutate()}
           disabled={!form.description.trim() || createMutation.isPending}
         >
           {createMutation.isPending ? (
             <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Saving…</>
           ) : (
-            <><Plus className="w-3 h-3 mr-1" />Create & Reconcile</>
+            <><Plus className="w-3 h-3 mr-1" />Create</>
           )}
         </Button>
       </div>
