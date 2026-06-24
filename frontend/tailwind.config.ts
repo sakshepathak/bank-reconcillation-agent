@@ -69,7 +69,7 @@ const config: Config = {
         lg: '0 12px 28px hsl(32 28% 25% / 0.10), 0 4px 10px hsl(32 28% 25% / 0.06)',
       },
       fontFamily: {
-        sans: ['Outfit', ...fontFamily.sans],
+        sans: ['Inter', ...fontFamily.sans],
         mono: ['JetBrains Mono', ...fontFamily.mono],
       },
       keyframes: {

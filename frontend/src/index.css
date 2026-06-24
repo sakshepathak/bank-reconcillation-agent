@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -19,9 +19,9 @@
     --popover-foreground: 30 12% 16%;
 
     /* Brand: a confident, low-glare marine blue (not the old neon indigo) */
-    --primary: 216 72% 46%;            /* #1F60C4 */
+    --primary: 216 50% 46%;            /* softened marine — desaturated, calmer on cream */
     --primary-foreground: 40 33% 99%;  /* ivory, stays in the warm world */
-    --primary-hover: 216 74% 41%;      /* #1B55B0  hover / pressed */
+    --primary-hover: 216 52% 41%;      /* hover / pressed */
     --primary-subtle: 216 60% 95%;     /* #E8F0FB  selected rows, washes */
 
     --secondary: 38 24% 92%;           /* warm taupe fill */
@@ -62,6 +62,8 @@
   body {
     @apply bg-background text-foreground font-sans;
     font-feature-settings: "rlig" 1, "calt" 1;
+    scrollbar-width: thin;                              /* Firefox */
+    scrollbar-color: hsl(216 28% 80%) transparent;      /* Firefox: thumb + track */
   }
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', monospace;
@@ -74,8 +76,12 @@
   }
 }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+/* Scrollbar — soft on-brand blue (was the cream --border, which looked off) */
+::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 9999px; }
-::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+::-webkit-scrollbar-thumb { background: hsl(216 28% 80%); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(216 40% 66%); }
+
+/* On the blue sidebar a tinted thumb would vanish — use a translucent white one */
+.sidebar-scroll::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.28); }
+.sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgb(255 255 255 / 0.45); }
