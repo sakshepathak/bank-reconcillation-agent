@@ -26,3 +26,13 @@ export function formatDate(iso: string): string {
 export function formatPct(value: number): string {
   return `${value.toFixed(1)}%`
 }
+
+/**
+ * A document is PARTIALLY PAID when some — but not all — of it has been settled
+ * (paid_amount > 0 and still owing). This is derived from amounts, NOT a status
+ * value, so a partial keeps status 'awaiting_payment' yet shows in BOTH the
+ * Awaiting Payment and Paid tabs. One shared definition for Purchases + Sales.
+ */
+export function isPartiallyPaid(d: { status?: string; paid_amount?: number; outstanding?: number }): boolean {
+  return d.status !== 'voided' && (d.paid_amount ?? 0) > 0.005 && (d.outstanding ?? 0) > 0.005
+}

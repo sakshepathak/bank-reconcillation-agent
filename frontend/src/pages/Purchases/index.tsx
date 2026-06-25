@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useConfirm } from '@/components/ConfirmProvider'
-import { cn, formatCurrency, formatDate } from '@/lib/utils'
+import { cn, formatCurrency, formatDate, isPartiallyPaid } from '@/lib/utils'
 import { CreditsList } from '@/components/CreditsList'
 import type { Bill, BillLineCreate, DocumentStatus, Credit } from '@/types'
 
@@ -252,12 +252,22 @@ export default function Purchases() {
     draft: bills?.filter((b) => b.status === 'draft').length ?? 0,
     awaiting_approval: bills?.filter((b) => b.status === 'awaiting_approval').length ?? 0,
     awaiting_payment: bills?.filter((b) => b.status === 'awaiting_payment').length ?? 0,
-    paid: bills?.filter((b) => b.status === 'paid').length ?? 0,
+    paid: bills?.filter((b) => b.status === 'paid' || isPartiallyPaid(b)).length ?? 0,
     voided: bills?.filter((b) => b.status === 'voided').length ?? 0,
     credits: payableCredits?.filter((c) => c.outstanding > 0.005).length ?? 0,
   }
 
-  const filtered = (bills ?? []).filter((b) => tab === 'all' || b.status === tab)
+  // A partially-paid bill (paid_amount>0 but still owing) keeps status
+  // 'awaiting_payment', so it shows in the Awaiting Payment tab AND, because of
+  // the explicit OR below, in the Paid tab. Each tab filters the same list
+  // independently → no duplicate within a tab, and exactly once under "All".
+  const filtered = (bills ?? []).filter((b) =>
+    tab === 'all'
+      ? true
+      : tab === 'paid'
+        ? b.status === 'paid' || isPartiallyPaid(b)
+        : b.status === tab,
+  )
   const totalOutstanding = filtered.reduce((sum, b) => sum + (b.outstanding ?? 0), 0)
 
   const subtotal = lines.reduce((s, l) => s + l.quantity * l.unit_price, 0)
@@ -433,7 +443,19 @@ export default function Purchases() {
                       {formatCurrency(b.total, b.currency)}
                     </td>
                     <td className="px-4 py-2.5 text-right font-mono text-sm">
-                      {b.outstanding > 0 ? (
+                      {isPartiallyPaid(b) ? (
+                        tab === 'paid' ? (
+                          <span className="text-emerald-700 font-medium">
+                            {formatCurrency(b.paid_amount, b.currency)}
+                            <span className="ml-1 text-[10px] text-muted-foreground">paid</span>
+                          </span>
+                        ) : (
+                          <span className="text-amber-700 font-medium">
+                            {formatCurrency(b.outstanding, b.currency)}
+                            <span className="ml-1 text-[10px] text-muted-foreground">left</span>
+                          </span>
+                        )
+                      ) : b.outstanding > 0 ? (
                         <span className="text-amber-700 font-medium">
                           {formatCurrency(b.outstanding, b.currency)}
                         </span>
@@ -442,7 +464,11 @@ export default function Purchases() {
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-center">
-                      <Badge variant={STATUS_VARIANT[b.status]}>{STATUS_LABEL[b.status]}</Badge>
+                      {isPartiallyPaid(b) ? (
+                        <Badge variant="info">Partially paid</Badge>
+                      ) : (
+                        <Badge variant={STATUS_VARIANT[b.status]}>{STATUS_LABEL[b.status]}</Badge>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
                       <Button
