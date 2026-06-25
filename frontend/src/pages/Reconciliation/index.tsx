@@ -53,7 +53,7 @@ interface BulkMatchData {
   suggested_groups: number[][]  // [[id1,id2,id3], ...]
 }
 
-type SubTab = 'match' | 'create' | 'credit' | 'transfer' | 'discuss'
+type SubTab = 'match' | 'create' | 'transfer' | 'discuss'
 
 // Thresholds come from the central match module so UI + future logic stay in sync.
 const { MID_LOW } = THRESHOLDS
@@ -503,9 +503,21 @@ function ReconcileRow({
     gcTime: Infinity,
   })
 
+  // Peek at bulk suggestions at the row level so the Match tab can show a small
+  // "possible split" dot. Same query key as MatchTab → shared cache, no extra
+  // network request.
+  const { data: bulkData } = useQuery<BulkMatchData>({
+    queryKey: ['bulk-suggestions', line.id],
+    queryFn: () => api.get(`/statement-lines/${line.id}/bulk-suggestions`).then((r) => r.data),
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+  const hasSplit = (bulkData?.suggested_groups.length ?? 0) > 0
+
   // Smart default tab — picked when suggestions arrive, then locked.
-  // Only auto-pair side-by-side when top suggestion is confident enough (≥65%).
-  // Below that, default to Create — user can still tap Match to see all options.
+  // Only switch to Match when the top suggestion is confident enough; below that
+  // default to Create. A possible split is surfaced as a dot on the Match tab
+  // (not an auto-switch / auto-expand), so the view stays clean.
   const [tab, setTab] = useState<SubTab | null>(null)
   useEffect(() => {
     if (tab !== null || suggestions === undefined) return
@@ -535,12 +547,12 @@ function ReconcileRow({
           compact ? 'px-2 py-0.5' : 'px-3 py-1.5',
         )}>
           <div className="flex items-center gap-0.5">
-            {(['match', 'create', 'credit', 'transfer', 'discuss'] as SubTab[]).map((t) => (
+            {(['match', 'create', 'transfer', 'discuss'] as SubTab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
                 className={cn(
-                  'font-medium rounded transition-colors capitalize',
+                  'font-medium rounded transition-colors capitalize inline-flex items-center gap-1',
                   compact ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs',
                   activeTab === t
                     ? 'bg-background text-foreground shadow-sm'
@@ -548,6 +560,12 @@ function ReconcileRow({
                 )}
               >
                 {t}
+                {t === 'match' && hasSplit && (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-indigo-500"
+                    title="Possible split payment — open Match to review"
+                  />
+                )}
               </button>
             ))}
           </div>
@@ -605,10 +623,7 @@ function ReconcileRow({
               />
             )}
             {activeTab === 'create' && (
-              <CreateTab line={line} isInflow={isInflow} onSuccess={invalidate} />
-            )}
-            {activeTab === 'credit' && (
-              <CreditTab line={line} isInflow={isInflow} currency={currency} onSuccess={invalidate} />
+              <CreateTab line={line} isInflow={isInflow} currency={currency} onSuccess={invalidate} />
             )}
             {activeTab === 'transfer' && (
               <TransferTab line={line} otherAccounts={otherAccounts} onSuccess={invalidate} />
@@ -654,13 +669,6 @@ function MatchTab({
     staleTime: Infinity,
     gcTime: Infinity,
   })
-
-  // Auto-open bulk panel if the system found an exact group
-  useEffect(() => {
-    if (bulkData && bulkData.suggested_groups.length > 0) {
-      setBulkOpen(true)
-    }
-  }, [bulkData])
 
   // Auto-select top suggestion when data arrives
   useEffect(() => {
@@ -1271,6 +1279,48 @@ function ExplainStep({ step: s }: { step: TraceStep }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CreateTab({
+  line, isInflow, currency, onSuccess,
+}: {
+  line: StatementLine
+  isInflow: boolean
+  currency: string
+  onSuccess: () => void
+}) {
+  // One "Create" category, two modes: a new journal entry, or allocating the
+  // line as a credit (prepayment / overpayment).
+  const [mode, setMode] = useState<'entry' | 'credit'>('entry')
+
+  return (
+    <div className="space-y-2">
+      {/* Mode toggle — same segmented style as the prepayment/overpayment switch */}
+      <div className="flex items-center gap-1">
+        {([['entry', 'New entry'], ['credit', 'Allocate as credit']] as const).map(([m, label]) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={cn(
+              'px-2.5 py-1 text-xs font-medium rounded transition-colors',
+              mode === m
+                ? 'bg-background text-foreground shadow-sm border'
+                : 'text-muted-foreground hover:bg-muted',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'entry' ? (
+        <CreateEntryForm line={line} isInflow={isInflow} onSuccess={onSuccess} />
+      ) : (
+        <CreditForm line={line} isInflow={isInflow} currency={currency} onSuccess={onSuccess} />
+      )}
+    </div>
+  )
+}
+
+// New journal entry for a line with no document (bank fee, interest, etc.).
+function CreateEntryForm({
   line, isInflow, onSuccess,
 }: {
   line: StatementLine
@@ -1347,11 +1397,24 @@ function CreateTab({
   )
 }
 
+// A bill/invoice this line can PART-PAY (same vendor, bigger than the line).
+// Shape mirrors the backend CreditTargetResponse from GET /partial-targets.
+interface PartialTarget {
+  target_type: 'invoice' | 'bill'
+  id: number
+  number: string | null
+  contact_name: string
+  total: number
+  paid_amount: number
+  outstanding: number
+  currency: string
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Credit tab — book an overpayment or prepayment from a line that doesn't match
+// Credit form — Prepayment / Overpayment / Split (the "Allocate as credit" modes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function CreditTab({
+function CreditForm({
   line, isInflow, currency, onSuccess,
 }: {
   line: StatementLine
@@ -1365,17 +1428,20 @@ function CreditTab({
   const docNoun = isInflow ? 'invoice' : 'bill'
   const docPath = isInflow ? 'invoices' : 'bills'
 
-  const [mode, setMode] = useState<'overpayment' | 'prepayment'>('prepayment')
-  const [contactName, setContactName] = useState('')
-  const [docId, setDocId] = useState<number | null>(null)
+  const [mode, setMode] = useState<'prepayment' | 'overpayment' | 'split'>('prepayment')
+  // Prepayment: suggest the contact from the bank line; the user confirms/edits
+  // before booking (we never silently book against a blank name).
+  const [contactName, setContactName] = useState(line.description ?? '')
+  const [overDocId, setOverDocId] = useState<number | null>(null)
+  const [splitDocId, setSplitDocId] = useState<number | null>(null)
 
+  // Overpayment candidates: open docs the payment EXCEEDS (a surplus remains).
   const { data: docs } = useQuery<(Bill | Invoice)[]>({
     queryKey: [docPath],
     queryFn: () => api.get(`/${docPath}/`).then((r) => r.data),
     enabled: mode === 'overpayment',
   })
-  // Open docs the payment genuinely EXCEEDS (so there's a real overpayment left over).
-  const candidates = (docs ?? []).filter(
+  const overCandidates = (docs ?? []).filter(
     (d) =>
       d.outstanding > 0.005 &&
       d.status !== 'paid' &&
@@ -1383,34 +1449,61 @@ function CreditTab({
       d.currency === currency &&
       d.outstanding < lineAmount - 0.005,
   )
-  const picked = candidates.find((d) => d.id === docId) ?? null
-  const creditAmount = picked
-    ? Math.round((lineAmount - picked.outstanding) * 100) / 100
+  const overPicked = overCandidates.find((d) => d.id === overDocId) ?? null
+  const creditAmount = overPicked
+    ? Math.round((lineAmount - overPicked.outstanding) * 100) / 100
     : lineAmount
 
+  // Split candidates: SAME-vendor open docs BIGGER than the line — backend-gated,
+  // so we only ever offer a part-pay against the vendor this line names.
+  const { data: splitTargets } = useQuery<PartialTarget[]>({
+    queryKey: ['partial-targets', line.id],
+    queryFn: () => api.get(`/statement-lines/${line.id}/partial-targets`).then((r) => r.data),
+    enabled: mode === 'split',
+  })
+  const splitPicked = (splitTargets ?? []).find((d) => d.id === splitDocId) ?? null
+  const remaining = splitPicked ? Math.round((splitPicked.outstanding - lineAmount) * 100) / 100 : 0
+
   const book = useMutation({
-    mutationFn: () =>
-      api.post(
+    mutationFn: () => {
+      if (mode === 'split') {
+        return api.post(`/statement-lines/${line.id}/match-partial`, {
+          target_type: splitPicked?.target_type,
+          target_id: splitDocId,
+        })
+      }
+      return api.post(
         `/statement-lines/${line.id}/book-credit`,
         mode === 'overpayment'
-          ? { kind: 'overpayment', document_ids: docId ? [docId] : [] }
-          : { kind: 'prepayment', contact_name: contactName },
-      ),
+          ? { kind: 'overpayment', document_ids: overDocId ? [overDocId] : [] }
+          : { kind: 'prepayment', contact_name: contactName.trim() },
+      )
+    },
     onSuccess: () => {
-      toast(`Booked ${mode} of ${formatCurrency(creditAmount, currency)}`)
+      if (mode === 'split') {
+        toast(`Part-paid ${formatCurrency(lineAmount, currency)} — ${formatCurrency(remaining, currency)} still owing`)
+      } else {
+        toast(`Booked ${mode} of ${formatCurrency(mode === 'overpayment' ? creditAmount : lineAmount, currency)}`)
+      }
       qc.invalidateQueries({ queryKey: ['credits'] })
       qc.invalidateQueries({ queryKey: [docPath] })
+      qc.invalidateQueries({ queryKey: ['partial-targets', line.id] })
       onSuccess()
     },
-    onError: (e) => toast(e instanceof ApiError ? e.message : 'Could not book credit', 'error'),
+    onError: (e) => toast(e instanceof ApiError ? e.message : 'Could not save', 'error'),
   })
 
-  const valid = mode === 'prepayment' ? contactName.trim().length > 0 : docId != null
+  const valid =
+    mode === 'prepayment'
+      ? contactName.trim().length > 0
+      : mode === 'overpayment'
+        ? overDocId != null
+        : splitDocId != null
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1">
-        {(['prepayment', 'overpayment'] as const).map((m) => (
+        {(['prepayment', 'overpayment', 'split'] as const).map((m) => (
           <button
             key={m}
             onClick={() => setMode(m)}
@@ -1426,11 +1519,11 @@ function CreditTab({
         ))}
       </div>
 
-      {mode === 'prepayment' ? (
+      {mode === 'prepayment' && (
         <>
           <p className="text-[11px] text-muted-foreground">
             No {docNoun} yet — hold the whole {formatCurrency(lineAmount, currency)} as a credit
-            against this contact, to apply to a future {docNoun}.
+            against this contact, for a future {docNoun}. Check the name before booking.
           </p>
           <Input
             value={contactName}
@@ -1439,24 +1532,26 @@ function CreditTab({
             className="h-8 text-xs"
           />
         </>
-      ) : (
+      )}
+
+      {mode === 'overpayment' && (
         <>
           <p className="text-[11px] text-muted-foreground">
             Pick the {docNoun} this payment settles — it's paid in full and the extra becomes a credit.
           </p>
-          {!candidates.length ? (
+          {!overCandidates.length ? (
             <p className="text-[11px] text-muted-foreground py-2">
               No open {docNoun} smaller than {formatCurrency(lineAmount, currency)} to overpay.
             </p>
           ) : (
             <div className="space-y-1 max-h-32 overflow-y-auto">
-              {candidates.map((d) => (
+              {overCandidates.map((d) => (
                 <button
                   key={d.id}
-                  onClick={() => setDocId(d.id)}
+                  onClick={() => setOverDocId(d.id)}
                   className={cn(
                     'w-full flex items-center justify-between rounded border px-2 py-1.5 text-left text-xs transition-colors',
-                    docId === d.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/40',
+                    overDocId === d.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/40',
                   )}
                 >
                   <span className="font-medium truncate">
@@ -1469,26 +1564,67 @@ function CreditTab({
               ))}
             </div>
           )}
+          {overPicked && (
+            <p className="text-[11px] text-muted-foreground">
+              Credits <span className="font-medium text-foreground">{overPicked.contact_name}</span> with{' '}
+              <span className="font-mono font-medium text-foreground">{formatCurrency(creditAmount, currency)}</span>.
+            </p>
+          )}
         </>
       )}
 
-      <div className="flex items-center gap-2">
-        {(mode === 'prepayment' || picked) && (
-          <span className="text-[11px] text-muted-foreground">
-            Credit:{' '}
-            <span className="font-mono font-medium text-foreground">
-              {formatCurrency(creditAmount, currency)}
-            </span>
-          </span>
-        )}
+      {mode === 'split' && (
+        <>
+          <p className="text-[11px] text-muted-foreground">
+            Part-pay one {docNoun} from this vendor — it stays open with the remainder,
+            cleared by a later payment.
+          </p>
+          {!(splitTargets ?? []).length ? (
+            <p className="text-[11px] text-muted-foreground py-2">
+              No open {docNoun} from this contact larger than {formatCurrency(lineAmount, currency)} to part-pay.
+            </p>
+          ) : (
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {(splitTargets ?? []).map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => setSplitDocId(d.id)}
+                  className={cn(
+                    'w-full flex items-center justify-between rounded border px-2 py-1.5 text-left text-xs transition-colors',
+                    splitDocId === d.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/40',
+                  )}
+                >
+                  <span className="font-medium truncate">
+                    {d.number ?? `${docNoun} #${d.id}`} · {d.contact_name}
+                  </span>
+                  <span className="font-mono text-amber-700 ml-2 shrink-0">
+                    {formatCurrency(d.outstanding, d.currency)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {splitPicked && (
+            <p className="text-[11px] text-muted-foreground">
+              Pays <span className="font-mono font-medium text-foreground">{formatCurrency(lineAmount, currency)}</span>{' '}
+              of {formatCurrency(splitPicked.outstanding, currency)} —{' '}
+              <span className="font-mono font-medium text-amber-700">{formatCurrency(remaining, currency)}</span> still owing.
+            </p>
+          )}
+        </>
+      )}
+
+      <div className="flex items-center justify-end">
         <Button
           size="sm"
-          className="h-7 px-4 text-xs ml-auto capitalize"
+          className="h-7 px-4 text-xs capitalize"
           onClick={() => book.mutate()}
           disabled={!valid || book.isPending}
         >
           {book.isPending ? (
-            <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Booking…</>
+            <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Saving…</>
+          ) : mode === 'split' ? (
+            <>Part-pay</>
           ) : (
             <>Book {mode}</>
           )}
