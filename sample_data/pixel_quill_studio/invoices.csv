@@ -1,0 +1,16 @@
+number,customer,date,due_date,amount,currency,status
+INV-1001,Northwind Trading Ltd,2026-02-20,2026-03-22,2500.00,GBP,awaiting_payment
+INV-1002,Meridian Foods Ltd,2026-02-25,2026-03-27,1840.00,GBP,awaiting_payment
+INV-1003,Summit Outdoors Co,2026-02-24,2026-03-26,320.00,GBP,awaiting_payment
+INV-1004,Summit Outdoors Co,2026-02-26,2026-03-28,180.00,GBP,awaiting_payment
+INV-1005,Summit Outdoors Co,2026-02-27,2026-03-29,250.00,GBP,awaiting_payment
+INV-1006,Harbourline Media,2026-02-26,2026-03-28,1200.00,GBP,awaiting_payment
+INV-1007,Acme Corp,2026-02-27,2026-03-29,1200.00,GBP,awaiting_payment
+INV-1008,Quay Street Bistro,2026-03-01,2026-03-31,500.00,GBP,awaiting_payment
+INV-1009,Zephyr Tech Solutions,2026-02-22,2026-03-24,3000.00,GBP,awaiting_payment
+INV-1010,Delta Holdings,2026-03-02,2026-04-01,600.00,GBP,awaiting_payment
+INV-1011,Delta Holdings,2026-03-10,2026-04-09,600.00,GBP,awaiting_payment
+INV-1012,Castlebridge University,2026-03-10,2026-04-09,9000.00,GBP,awaiting_payment
+INV-1013,Meridian Foods Ltd,2026-04-01,2026-05-01,1840.00,GBP,awaiting_payment
+INV-1014,Northwind Trading Ltd,2026-04-01,2026-05-01,2500.00,GBP,awaiting_payment
+INV-1015,Harbourline Media,2026-04-08,2026-05-08,1450.00,GBP,awaiting_payment

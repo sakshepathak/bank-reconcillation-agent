@@ -1,0 +1,15 @@
+number,supplier,date,due_date,amount,currency,status
+BILL-2001,Bristol Workspace Ltd,2026-03-01,2026-03-15,3200.00,GBP,awaiting_payment
+BILL-2002,Slack Technologies,2026-03-01,2026-03-16,180.00,GBP,awaiting_payment
+BILL-2003,Adobe,2026-03-01,2026-03-16,79.00,GBP,awaiting_payment
+BILL-2004,Microsoft 365,2026-03-01,2026-03-16,220.00,GBP,awaiting_payment
+BILL-2005,Penhaligon & Co Accountants,2026-03-01,2026-03-16,450.00,GBP,awaiting_payment
+BILL-2006,Figma,2026-03-01,2026-03-16,144.00,GBP,awaiting_payment
+BILL-2007,Tom Hargreaves,2026-03-05,2026-03-20,1350.00,GBP,awaiting_payment
+BILL-2008,Inkwell Print Co,2026-03-24,2026-04-08,980.00,GBP,awaiting_payment
+BILL-2009,Inkwell Print Co,2026-03-26,2026-04-10,1220.00,GBP,awaiting_payment
+BILL-2010,Bristol Workspace Ltd,2026-04-01,2026-04-15,3200.00,GBP,awaiting_payment
+BILL-2011,Slack Technologies,2026-04-01,2026-04-16,180.00,GBP,awaiting_payment
+BILL-2012,Adobe,2026-04-01,2026-04-16,79.00,GBP,awaiting_payment
+BILL-2013,Microsoft 365,2026-04-01,2026-04-16,220.00,GBP,awaiting_payment
+BILL-2014,Penhaligon & Co Accountants,2026-04-01,2026-04-16,450.00,GBP,awaiting_payment
