@@ -36,6 +36,7 @@ from api.schemas.models import (
     MatchBulkInvoicesRequest, MatchBulkBillsRequest,
     BulkMatchSuggestionsResponse, BulkMatchOpenDoc,
     ReconciledLineResponse, UnreconcileResult, BookCreditRequest,
+    MatchPartialRequest, CreditTargetResponse,
 )
 from api.deps import get_db, get_current_org_id, require_user
 from engine.contacts import upsert_contact
@@ -122,6 +123,42 @@ def _load_account_for_org(db: Session, account_id: int, org_id: int) -> BankAcco
     if not acc or acc.org_id != org_id:
         raise HTTPException(status_code=404, detail="Bank account not found")
     return acc
+
+
+def _norm_ccy(c) -> str:
+    """Currency compared case/whitespace-insensitively, same as the credits router."""
+    return (c or "").strip().upper()
+
+
+def assert_doc_not_reconciled(db: Session, org_id: int, target_type: str, target_id: int) -> None:
+    """
+    Block deleting/voiding a bill or invoice that a NON-pending statement line has
+    settled (in full, partially, in a split, or via an overpayment). The line must
+    be unreconciled first, otherwise its paid_amount and bank-balance moves would
+    be orphaned against a deleted document. (Statement-line settlements are not
+    credit allocations, so reverse_allocations_for_target does NOT cover them.)
+    """
+    lines = db.exec(
+        select(StatementLine).where(
+            StatementLine.org_id == org_id,
+            StatementLine.status != StatementLineStatus.PENDING,
+        )
+    ).all()
+    msg = f"A reconciled bank line settled this {target_type}. Unreconcile that line first."
+    for ln in lines:
+        single = ln.matched_invoice_id if target_type == "invoice" else ln.matched_bill_id
+        if single == target_id:
+            raise HTTPException(status_code=409, detail=msg)
+        raw = ln.matched_invoice_ids if target_type == "invoice" else ln.matched_bill_ids
+        if raw:
+            try:
+                allocs = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                allocs = []
+            if isinstance(allocs, list) and any(
+                isinstance(a, dict) and a.get("id") == target_id for a in allocs
+            ):
+                raise HTTPException(status_code=409, detail=msg)
 
 
 def _log_audit(
@@ -1348,6 +1385,158 @@ def match_bill(
     )
 
     db.add(s); db.add(bill)
+    db.commit()
+    db.refresh(s)
+    return _to_resp(s)
+
+
+@router.get("/{line_id}/partial-targets", response_model=list[CreditTargetResponse])
+def get_partial_targets(
+    line_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+) -> list[CreditTargetResponse]:
+    """
+    Open bills/invoices this PENDING line could PART-PAY: the SAME vendor (identified
+    from the bank description — we never suggest a cross-vendor partial), the same
+    currency, and an outstanding balance STRICTLY GREATER than the line, so paying
+    the whole line leaves a real remainder owing. The UI renders exactly what
+    match-partial will accept — one source of truth, like /credits/{id}/targets.
+    """
+    s = _load_line_for_org(db, line_id, org_id)
+    is_in = s.received > 0
+    is_out = s.spent > 0
+    if s.status != StatementLineStatus.PENDING or is_in == is_out:
+        return []
+
+    line_amount = round(s.received if is_in else s.spent, 2)
+    acc = db.get(BankAccount, s.bank_account_id)
+    line_ccy = _norm_ccy(acc.currency if acc else "GBP")
+    Model = Invoice if is_in else Bill
+    want = "invoice" if is_in else "bill"
+
+    docs = db.exec(
+        select(Model).where(Model.org_id == org_id, Model.status == DocumentStatus.AWAITING_PAYMENT)
+    ).all()
+    # Strictly bigger than the line (so a remainder remains) + same currency.
+    open_docs = [
+        d for d in docs
+        if round(d.total - d.paid_amount, 2) - line_amount > 0.005
+        and _norm_ccy(d.currency) == line_ccy
+    ]
+    if not open_docs:
+        return []
+
+    # Vendor-gate to the ONE vendor the bank line names. A partial's remainder must
+    # only ever be settled by the SAME vendor, so we never suggest another's docs.
+    alias_rows = db.exec(select(VendorAlias).where(VendorAlias.org_id == org_id)).all()
+    alias_map = {a.alias.lower(): a.canonical_name for a in alias_rows}
+    unique_vendors = list({d.contact_name for d in open_docs})
+    nm = match_vendors(
+        s.description or "", unique_vendors,
+        alias_map=alias_map, threshold=0.0, use_embeddings=True, top_k=1,
+    )
+    if not nm or nm[0].score < 0.25:
+        return []
+    top_vendor = unique_vendors[nm[0].invoice_idx]
+
+    out: list[CreditTargetResponse] = []
+    for d in open_docs:
+        if d.contact_name != top_vendor:
+            continue
+        out.append(CreditTargetResponse(
+            target_type=want,
+            id=d.id,
+            number=getattr(d, "number", None),
+            contact_id=d.contact_id,
+            contact_name=d.contact_name,
+            issue_date=d.issue_date,
+            due_date=getattr(d, "due_date", None),
+            total=round(d.total, 2),
+            paid_amount=round(d.paid_amount, 2),
+            outstanding=round(d.total - d.paid_amount, 2),
+            currency=d.currency,
+            status=d.status.value if hasattr(d.status, "value") else str(d.status),
+        ))
+    out.sort(key=lambda x: x.issue_date)
+    return out
+
+
+@router.post("/{line_id}/match-partial", response_model=StatementLineResponse)
+def match_partial(
+    line_id: int,
+    body: MatchPartialRequest,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_current_org_id),
+    user: User = Depends(require_user),
+):
+    """
+    Part-pay ONE open bill/invoice with this line. The line is fully consumed and
+    the document is left PARTIALLY PAID (a remainder still owing), so it keeps
+    status awaiting_payment and the remainder is matched by a future payment.
+
+    Strict: the line must be LESS than the document's outstanding (equal is a normal
+    match; more is an overpayment). Reuses the single-match link + balance move, so
+    unreconcile reverses it through the existing single-match path.
+    """
+    s = _load_line_for_org(db, line_id, org_id)
+    _require_pending(s)
+
+    is_out = s.spent > 0
+    is_in = s.received > 0
+    if is_out == is_in:
+        raise HTTPException(status_code=422, detail="Line must be a single spend or receipt to part-pay")
+    line_amount = round(s.spent if is_out else s.received, 2)
+    want = "bill" if is_out else "invoice"
+    if (body.target_type or "").strip().lower() != want:
+        raise HTTPException(status_code=422, detail=f"This line part-pays a {want}, not a {body.target_type}")
+
+    Model = Bill if is_out else Invoice
+    doc = db.get(Model, body.target_id)
+    if not doc or doc.org_id != org_id:
+        raise HTTPException(status_code=404, detail=f"{want.capitalize()} not found")
+    if doc.status != DocumentStatus.AWAITING_PAYMENT:
+        raise HTTPException(status_code=409, detail=f"Only an awaiting-payment {want} can be part-paid")
+
+    acc = db.get(BankAccount, s.bank_account_id)
+    if _norm_ccy(doc.currency) != _norm_ccy(acc.currency if acc else "GBP"):
+        raise HTTPException(status_code=422, detail=f"Currency doesn't match this {want}")
+
+    outstanding = round(doc.total - doc.paid_amount, 2)
+    if outstanding - line_amount <= 0.005:
+        raise HTTPException(
+            status_code=422,
+            detail=f"This payment covers the full {want} — use a normal match (or book an overpayment if it's more).",
+        )
+
+    now = _now()
+    doc.paid_amount = round(doc.paid_amount + line_amount, 2)
+    # By construction line < outstanding, so the document stays partially paid;
+    # guard the PAID flip defensively against rounding at the boundary.
+    if doc.paid_amount >= doc.total - 0.005:
+        doc.status = DocumentStatus.PAID
+    doc.updated_at = now
+    db.add(doc)
+    _record_payment_timing(db, org_id, _vendor_key(doc), payment_lag_days(s.date, doc.issue_date))
+
+    if is_out:
+        s.matched_bill_id = doc.id
+    else:
+        s.matched_invoice_id = doc.id
+    s.status = StatementLineStatus.MATCHED
+    s.reconciled_at = now
+    _apply_balance(db, s.bank_account_id, _net_amount(s), org_id)
+
+    remaining = round(outstanding - line_amount, 2)
+    doc_label = getattr(doc, "number", None) or f"{want.capitalize()} #{doc.id}"
+    _log_audit(
+        db, org_id=org_id, actor=user, action=AuditAction.MATCH_PARTIAL, line=s,
+        target_type=want, target_id=doc.id,
+        target_label=f"{doc_label} · {doc.contact_name}",
+        detail=f"Part-paid {line_amount:.2f} of {want} {doc_label}; {remaining:.2f} still owing",
+    )
+
+    db.add(s)
     db.commit()
     db.refresh(s)
     return _to_resp(s)

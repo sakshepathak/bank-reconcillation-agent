@@ -503,6 +503,13 @@ class MatchBulkBillsRequest(BaseModel):
     bill_ids: list[int]
 
 
+class MatchPartialRequest(BaseModel):
+    """Part-pay ONE open bill/invoice with this bank line: the line is fully
+    consumed and the document is left partially paid (a remainder still owing)."""
+    target_type: str                         # "bill" | "invoice"
+    target_id: int
+
+
 class BookCreditRequest(BaseModel):
     """Book a credit from a bank line during reconciliation.
 

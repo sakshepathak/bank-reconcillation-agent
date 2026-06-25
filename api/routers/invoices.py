@@ -244,7 +244,11 @@ def delete_invoice(
     user: User = Depends(require_user),
 ):
     from api.routers.credits import reverse_allocations_for_target
+    from api.routers.statement_lines import assert_doc_not_reconciled
     inv = _load_invoice_for_org(db, invoice_id, org_id)
+    # A reconciled bank line settled (part of) this invoice — block deletion until
+    # that line is unreconciled, so paid_amount and the bank balance never orphan.
+    assert_doc_not_reconciled(db, org_id, "invoice", invoice_id)
     # Any credit applied to this invoice comes back — the money is still ours.
     reverse_allocations_for_target(
         db, org_id=org_id, target_type="invoice", target_id=invoice_id, actor=user,

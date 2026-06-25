@@ -108,6 +108,7 @@ class AuditAction(str, Enum):
     MATCH_BILL = "match_bill"
     MATCH_BULK_INVOICES = "match_bulk_invoices"
     MATCH_BULK_BILLS = "match_bulk_bills"
+    MATCH_PARTIAL = "match_partial"          # part-paid one bill/invoice; remainder stays open
     CREATE_ENTRY = "create_entry"
     TRANSFER = "transfer"
     DISCUSS = "discuss"

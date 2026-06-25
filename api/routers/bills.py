@@ -231,7 +231,11 @@ def delete_bill(
     user: User = Depends(require_user),
 ):
     from api.routers.credits import reverse_allocations_for_target
+    from api.routers.statement_lines import assert_doc_not_reconciled
     b = _load_bill_for_org(db, bill_id, org_id)
+    # A reconciled bank line settled (part of) this bill — block deletion until
+    # that line is unreconciled, so paid_amount and the bank balance never orphan.
+    assert_doc_not_reconciled(db, org_id, "bill", bill_id)
     # Any credit applied to this bill comes back — the money is still ours.
     reverse_allocations_for_target(
         db, org_id=org_id, target_type="bill", target_id=bill_id, actor=user,
