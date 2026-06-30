@@ -10,6 +10,7 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import type { BankAccount } from '@/types'
 import OrgSwitcher from '@/components/OrgSwitcher'
+import MatchaMark from '@/components/MatchaMark'
 
 type NavItem = { to: string; icon: typeof LayoutDashboard; label: string; badge?: boolean }
 
@@ -80,20 +81,29 @@ export default function Sidebar() {
     <aside
       data-pinned={pinned ? 'true' : 'false'}
       className={cn(
-        'group flex flex-col flex-shrink-0 overflow-hidden shadow-xl',
-        'bg-gradient-to-b from-primary to-[hsl(216_50%_38%)]',
+        'group relative flex flex-col flex-shrink-0 overflow-hidden shadow-xl',
+        'bg-gradient-to-b from-[hsl(84_44%_40%)] via-primary to-[hsl(89_50%_19%)]',
         'transition-[width] duration-200 ease-out',
         pinned ? 'w-56' : 'w-16 hover:w-56',
       )}
     >
+      {/* a big faint doodle steeping in the corner */}
+      <MatchaMark className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 w-44 h-44 text-white/[0.06] animate-sway" />
+
       {/* Brand + pin toggle */}
-      <div className="flex items-center gap-2.5 px-3 py-4 border-b border-white/15">
-        <div className="w-9 h-9 rounded-lg bg-white/15 flex items-center justify-center flex-shrink-0">
-          <span className="text-white font-black text-base tracking-tight">OOO</span>
+      <div className="relative flex items-center gap-2.5 px-3 py-4 border-b border-white/15">
+        <div className="relative w-9 h-9 rounded-xl bg-white/15 ring-1 ring-white/10 flex items-center justify-center flex-shrink-0 text-white">
+          {/* tiny wisp of steam off the mark */}
+          <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 flex gap-[3px] opacity-70">
+            {[0, 1, 2].map((i) => (
+              <span key={i} className="block w-[2px] h-2 rounded-full bg-white/70 animate-steam" style={{ animationDelay: `${i * 0.5}s` }} />
+            ))}
+          </span>
+          <MatchaMark className="w-6 h-6 group-hover-wiggle" />
         </div>
         <div className={cn('leading-tight min-w-0', REVEAL)}>
-          <p className="text-white font-semibold text-sm">OOO</p>
-          <p className="text-white/60 text-[10px]">Bank Reconciliation</p>
+          <p className="text-white font-display font-semibold text-base">Matcha</p>
+          <p className="text-white/60 text-[10px]">It matches.</p>
         </div>
         <button
           type="button"
@@ -109,12 +119,12 @@ export default function Sidebar() {
       </div>
 
       {/* Org switcher (collapses to its building icon; full switcher when expanded) */}
-      <div className="px-3 pt-3 pb-1">
+      <div className="relative px-3 pt-3 pb-1">
         <OrgSwitcher />
       </div>
 
       {/* Nav */}
-      <nav className="sidebar-scroll flex-1 px-2.5 py-2 overflow-y-auto overflow-x-hidden">
+      <nav className="sidebar-scroll relative flex-1 px-2.5 py-2 overflow-y-auto overflow-x-hidden">
         {NAV_GROUPS.map((group) => (
           <div key={group.label} className="mb-3">
             <p className={cn('px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/40', REVEAL)}>
@@ -128,10 +138,10 @@ export default function Sidebar() {
                   title={label}
                   className={({ isActive }) =>
                     cn(
-                      'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-150',
+                      'relative flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150',
                       isActive
-                        ? 'bg-white/20 text-white'
-                        : 'text-white/65 hover:bg-white/10 hover:text-white',
+                        ? "bg-white/20 text-white shadow-sm before:content-[''] before:absolute before:left-0.5 before:top-1/2 before:-translate-y-1/2 before:h-5 before:w-1 before:rounded-full before:bg-white/90"
+                        : 'text-white/65 hover:bg-white/10 hover:text-white hover:translate-x-0.5',
                     )
                   }
                 >
@@ -159,7 +169,7 @@ export default function Sidebar() {
       </nav>
 
       {/* User + logout */}
-      <div className="px-3 py-3 border-t border-white/10 space-y-2">
+      <div className="relative px-3 py-3 border-t border-white/10 space-y-2">
         {user && (
           <div className={cn('px-2 py-1 overflow-hidden', REVEAL)}>
             <p className="text-white text-sm font-medium truncate" title={user.name}>
@@ -182,7 +192,7 @@ export default function Sidebar() {
           <LogOut className="w-4 h-4 flex-shrink-0" />
           <span className={REVEAL}>Logout</span>
         </button>
-        <p className={cn('text-white/40 text-[10px] text-center pt-1', REVEAL)}>OOO · v1</p>
+        <p className={cn('text-white/45 text-[10px] text-center pt-1', REVEAL)}>Matcha 🍵 steeped v1</p>
       </div>
     </aside>
   )

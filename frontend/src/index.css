@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -18,11 +18,13 @@
     --popover: 40 40% 99%;             /* #FEFCF8 */
     --popover-foreground: 30 12% 16%;
 
-    /* Brand: a confident, low-glare marine blue (not the old neon indigo) */
-    --primary: 216 50% 46%;            /* softened marine — desaturated, calmer on cream */
+    /* Brand: matcha — an earthy, low-glare yellow-green that sits warm on cream
+       (the whisked-tea green, not a neon or a forest). Dark enough that ivory
+       text clears AA on it. */
+    --primary: 89 46% 32%;             /* #4F7325  steeped matcha */
     --primary-foreground: 40 33% 99%;  /* ivory, stays in the warm world */
-    --primary-hover: 216 52% 41%;      /* hover / pressed */
-    --primary-subtle: 216 60% 95%;     /* #E8F0FB  selected rows, washes */
+    --primary-hover: 89 49% 27%;       /* hover / pressed */
+    --primary-subtle: 84 44% 91%;      /* #E7EFD4  selected rows, washes */
 
     --secondary: 38 24% 92%;           /* warm taupe fill */
     --secondary-foreground: 30 12% 20%;
@@ -30,8 +32,8 @@
     --muted: 38 24% 94%;               /* #F0EBE0  skeletons, inert fills */
     --muted-foreground: 32 9% 44%;     /* #786F62  warm gray meta */
 
-    --accent: 216 60% 95%;             /* in-family hover (= primary-subtle) */
-    --accent-foreground: 216 72% 38%;
+    --accent: 84 44% 91%;              /* in-family hover (= primary-subtle) */
+    --accent-foreground: 89 50% 26%;
 
     --destructive: 6 64% 51%;          /* #CF4F3F  terracotta */
     --destructive-foreground: 40 33% 99%;
@@ -49,7 +51,7 @@
 
     --border: 36 20% 87%;              /* #DED7C9  warm hairline */
     --input: 36 22% 84%;               /* #D6CDBC  field border, reads inset */
-    --ring: 216 70% 54%;               /* softer than primary, legible on cream */
+    --ring: 89 42% 42%;                /* softer matcha, legible on cream */
 
     --radius: 0.625rem;                /* 10px — softer, more designed */
   }
@@ -63,7 +65,7 @@
     @apply bg-background text-foreground font-sans;
     font-feature-settings: "rlig" 1, "calt" 1;
     scrollbar-width: thin;                              /* Firefox */
-    scrollbar-color: hsl(216 28% 80%) transparent;      /* Firefox: thumb + track */
+    scrollbar-color: hsl(89 18% 72%) transparent;       /* Firefox: thumb + track */
   }
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', monospace;
@@ -76,12 +78,63 @@
   }
 }
 
-/* Scrollbar — soft on-brand blue (was the cream --border, which looked off) */
+/* Scrollbar — soft on-brand matcha (was the cream --border, which looked off) */
 ::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: hsl(216 28% 80%); border-radius: 9999px; }
-::-webkit-scrollbar-thumb:hover { background: hsl(216 40% 66%); }
+::-webkit-scrollbar-thumb { background: hsl(89 18% 74%); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(89 30% 58%); }
 
-/* On the blue sidebar a tinted thumb would vanish — use a translucent white one */
+/* On the matcha sidebar a tinted thumb would vanish — use a translucent white one */
 .sidebar-scroll::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.28); }
 .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: rgb(255 255 255 / 0.45); }
+
+/* ── Whimsy: steam, bob, sway — the bits that make Matcha feel alive ──────── */
+@keyframes matcha-steam {
+  0%   { opacity: 0;   transform: translateY(2px)  scaleY(0.6); }
+  22%  { opacity: 0.8;                                          }
+  100% { opacity: 0;   transform: translateY(-11px) scaleY(1.15); }
+}
+@keyframes matcha-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+@keyframes matcha-sway {
+  0%, 100% { transform: rotate(-3deg); }
+  50%      { transform: rotate(4deg); }
+}
+@keyframes matcha-wiggle {
+  0%, 100% { transform: rotate(0); }
+  35%      { transform: rotate(-7deg); }
+  70%      { transform: rotate(6deg); }
+}
+.animate-steam { transform-origin: bottom center; animation: matcha-steam 2.8s ease-in-out infinite; }
+.animate-bob   { animation: matcha-bob 3.6s ease-in-out infinite; }
+.animate-sway  { transform-origin: bottom center; animation: matcha-sway 5s ease-in-out infinite; }
+.group:hover .group-hover-wiggle { animation: matcha-wiggle 0.55s ease-in-out; }
+
+/* The character's eyes blink every few seconds (long open, quick close). */
+@keyframes matcha-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  94%           { transform: scaleY(0.12); }
+}
+.animate-blink { transform-box: fill-box; transform-origin: center; animation: matcha-blink 4.2s ease-in-out infinite; }
+
+/* Loading: the matcha liquid fills up the cup then drains, on a loop. */
+@keyframes matcha-fill {
+  0%        { transform: translateY(100%); }
+  42%, 58%  { transform: translateY(2%); }
+  100%      { transform: translateY(100%); }
+}
+.matcha-liquid { transform-box: fill-box; transform-origin: bottom; animation: matcha-fill 2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-steam, .animate-bob, .animate-sway, .animate-blink,
+  .matcha-liquid, .group:hover .group-hover-wiggle { animation: none; }
+}
+
+/* A faint hand-drawn paper grain for hero / brand surfaces (kept very subtle so
+   it never fights the data). Layer it under content with a low opacity. */
+.paper-grain {
+  background-image: radial-gradient(hsl(89 30% 40% / 0.05) 1px, transparent 1px);
+  background-size: 14px 14px;
+}

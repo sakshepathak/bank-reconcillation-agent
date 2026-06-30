@@ -1,7 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { ConfirmProvider } from '@/components/ConfirmProvider'
 import { ToastProvider } from '@/components/ToastProvider'
 import App from './App'
@@ -25,7 +24,6 @@ createRoot(document.getElementById('root')!).render(
           <App />
         </ConfirmProvider>
       </ToastProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>
   </StrictMode>,
 )

@@ -8,7 +8,24 @@ import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn, formatCurrency, formatPct, formatDate } from '@/lib/utils'
+import MatchaMark from '@/components/MatchaMark'
+import MatchaCup from '@/components/MatchaCup'
 import type { DashboardStats, RunSummary, BankAccount } from '@/types'
+
+/** Three rising steam wisps, tinted for light or dark backgrounds. */
+function Steam({ tone = 'matcha' }: { tone?: 'matcha' | 'light' }) {
+  return (
+    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 flex gap-1" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className={cn('block w-[3px] h-3.5 rounded-full animate-steam', tone === 'light' ? 'bg-white/45' : 'bg-primary/30')}
+          style={{ animationDelay: `${i * 0.5}s` }}
+        />
+      ))}
+    </span>
+  )
+}
 
 /* ── Greeting ─────────────────────────────────────────────────────────────── */
 
@@ -32,8 +49,9 @@ function CapabilityTile({
 }) {
   const inner = (
     <>
-      <div className="flex items-start justify-between">
-        <div className="w-10 h-10 rounded-xl bg-primary-subtle text-primary flex items-center justify-center">
+      <MatchaMark className="pointer-events-none absolute -right-3 -bottom-3 w-16 h-16 text-primary/[0.05] group-hover:text-primary/15 transition-colors duration-200" />
+      <div className="relative flex items-start justify-between">
+        <div className="w-10 h-10 rounded-xl bg-primary-subtle text-primary flex items-center justify-center group-hover:animate-bob">
           <Icon className="w-5 h-5" />
         </div>
         {soon ? (
@@ -44,7 +62,7 @@ function CapabilityTile({
           <ArrowRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
         )}
       </div>
-      <div className="mt-4">
+      <div className="relative mt-4">
         <p className="text-[15px] font-semibold text-foreground">{title}</p>
         <p className="text-sm text-muted-foreground mt-1 leading-snug">{description}</p>
       </div>
@@ -52,7 +70,7 @@ function CapabilityTile({
   )
 
   const base =
-    'group flex flex-col justify-between min-h-[150px] p-5 rounded-xl border bg-card shadow-sm transition-all duration-150'
+    'group relative overflow-hidden flex flex-col justify-between min-h-[150px] p-5 rounded-xl border bg-card shadow-sm transition-all duration-150'
 
   if (soon) {
     return (
@@ -87,9 +105,14 @@ function ReconcileHero({
   const caughtUp = hasAccounts && pending === 0
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary to-[hsl(216_75%_34%)] text-primary-foreground shadow-lg sm:col-span-2 lg:col-span-2 lg:row-span-2 p-7 flex flex-col justify-between min-h-[316px]">
-      {/* watermark */}
-      <RefreshCw className="absolute -right-8 -bottom-8 w-56 h-56 text-white/10" strokeWidth={1.25} />
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary to-[hsl(89_52%_22%)] text-primary-foreground shadow-lg sm:col-span-2 lg:col-span-2 lg:row-span-2 p-7 flex flex-col justify-between min-h-[316px]">
+      {/* texture, a reconcile watermark up top, and Matcha steaming below-right */}
+      <div className="pointer-events-none absolute inset-0 paper-grain opacity-50" />
+      <RefreshCw className="pointer-events-none absolute -right-6 -top-8 w-44 h-44 text-white/[0.08]" strokeWidth={1.25} />
+      <div className="pointer-events-none absolute right-6 bottom-5 hidden sm:block">
+        <Steam tone="light" />
+        <MatchaCup className="w-16 h-16 animate-bob drop-shadow" />
+      </div>
 
       <div className="relative">
         <p className="text-sm font-medium text-white/70 flex items-center gap-2">
@@ -103,17 +126,17 @@ function ReconcileHero({
           </div>
         ) : !hasAccounts ? (
           <div className="mt-5">
-            <h2 className="text-2xl font-semibold tracking-tight">Let's get your books reconciled</h2>
+            <h2 className="font-display text-2xl font-semibold tracking-tight">Let's get your books reconciled</h2>
             <p className="text-white/75 mt-1.5 max-w-md">
               Add a bank account and import a statement — the engine will match it to your invoices and bills automatically.
             </p>
           </div>
         ) : caughtUp ? (
           <div className="mt-5">
-            <h2 className="text-3xl font-semibold tracking-tight flex items-center gap-2">
+            <h2 className="font-display text-3xl font-semibold tracking-tight flex items-center gap-2">
               <CheckCircle2 className="w-8 h-8" /> You're all caught up
             </h2>
-            <p className="text-white/75 mt-1.5">Every imported transaction has been reconciled. Nice work.</p>
+            <p className="text-white/75 mt-1.5">Every imported transaction is reconciled. Cup's empty — nice work. 🍵</p>
           </div>
         ) : (
           <div className="mt-5">
@@ -203,13 +226,21 @@ export default function Dashboard() {
   return (
     <div className="space-y-5 animate-in fade-in-0 duration-300">
       {/* Greeting */}
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          {greeting()}{firstName ? `, ${firstName}` : ''}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Here's your workspace — pick up where you left off, or explore what you can do.
-        </p>
+      <div className="flex items-center gap-3.5">
+        <div className="relative flex-shrink-0">
+          <Steam />
+          <div className="w-12 h-12 rounded-2xl bg-primary-subtle flex items-center justify-center animate-bob">
+            <MatchaCup className="w-8 h-8" />
+          </div>
+        </div>
+        <div>
+          <h1 className="font-display text-[28px] font-semibold tracking-tight text-foreground">
+            {greeting()}{firstName ? `, ${firstName}` : ''}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Freshly whisked. Pick up where you left off, or explore what Matcha can do.
+          </p>
+        </div>
       </div>
 
       {/* Bento grid */}
@@ -227,13 +258,13 @@ export default function Dashboard() {
           to="/bank-accounts"
           icon={Upload}
           title="Import statements"
-          description="Drop a bank statement, invoices or bills — CSV or PDF."
+          description="Drop a bank statement, invoices or bills — CSV or PDF. Matcha steeps the rest."
         />
         <CapabilityTile
           to="/reconciliation"
           icon={Sparkles}
           title="Smart matching"
-          description="AI recognises vendors and shows its working for every match."
+          description="Matcha spots the vendor behind every messy bank line — and shows its working."
         />
         <CapabilityTile
           to="/contacts"
@@ -245,13 +276,13 @@ export default function Dashboard() {
           to="/audit"
           icon={ScrollText}
           title="Audit trail"
-          description="Every reconciliation decision, recorded and explainable."
+          description="Every decision recorded and explainable — nothing left at the bottom of the cup."
         />
 
         {/* At a glance — metrics, demoted */}
         <div className="sm:col-span-2 lg:col-span-2 rounded-xl border bg-card shadow-sm p-5">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            At a glance
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <MatchaMark className="w-3.5 h-3.5 text-primary/60" /> At a glance
           </p>
           {statsLoading ? (
             <div className="grid grid-cols-2 gap-4 mt-4">
@@ -318,6 +349,12 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* a little sign-off with personality */}
+      <p className="text-center text-xs text-muted-foreground/70 pt-1 flex items-center justify-center gap-1.5">
+        <MatchaMark className="w-3.5 h-3.5 text-primary/50" />
+        Reconciliation, one sip at a time.
+      </p>
     </div>
   )
 }

@@ -106,7 +106,7 @@ function ScoreBar({
     emerald: 'bg-emerald-500',
     amber: 'bg-amber-500',
     slate: 'bg-slate-400',
-    indigo: 'bg-indigo-500',
+    indigo: 'bg-matcha-500',
   }[tone]
   return (
     <div className={cn('h-2 rounded-full bg-slate-100 overflow-hidden', className)}>
@@ -847,7 +847,7 @@ function StepDetail({ trace, currency }: { trace: Trace; currency: string }) {
         />
         <div className="grid grid-cols-3 gap-2 mt-2.5 text-[11px]">
           <CompCell label="Amount" value={s6.amount_component as number} reason={String(s6.amount_reason)} tone="text-emerald-700" />
-          <CompCell label="Date" value={s6.date_component as number} reason={String(s6.date_reason)} tone="text-indigo-700" />
+          <CompCell label="Date" value={s6.date_component as number} reason={String(s6.date_reason)} tone="text-matcha-700" />
           <CompCell label={`Name ×0.30`} value={s6.name_component as number} reason={`raw ${(s6.name_raw as number).toFixed(2)}`} tone="text-primary" />
         </div>
       </StepCard>
@@ -895,7 +895,7 @@ function CompositeBar({ amount, date, name, total }: { amount: number; date: num
     <div>
       <div className="flex h-4 rounded-full overflow-hidden bg-slate-100">
         <div className="bg-emerald-500 h-full" style={{ width: `${amount * 100}%` }} title={`amount ${amount.toFixed(2)}`} />
-        <div className="bg-indigo-500 h-full" style={{ width: `${date * 100}%` }} title={`date ${date.toFixed(2)}`} />
+        <div className="bg-matcha-500 h-full" style={{ width: `${date * 100}%` }} title={`date ${date.toFixed(2)}`} />
         <div className="bg-primary h-full" style={{ width: `${name * 100}%` }} title={`name ${name.toFixed(2)}`} />
       </div>
       <div className="flex justify-between text-[11px] mt-1">

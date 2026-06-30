@@ -333,18 +333,18 @@ function ReconcileForAccount({
           frozen during the matcher's cold-start work, and the user can always see
           how far along it is. Once results are cached it won't reappear on return. */}
       {!linesLoading && total > 0 && analysing > 0 && (
-        <div className="flex items-center gap-3.5 rounded-xl border border-indigo-200 bg-indigo-50/70 px-4 py-3">
+        <div className="flex items-center gap-3.5 rounded-xl border border-matcha-200 bg-matcha-50/70 px-4 py-3">
           <ProgressRing done={done} total={total} pct={pct} />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-indigo-900">
+            <p className="text-sm font-medium text-matcha-900">
               Finding matches for your transactions…
             </p>
-            <p className="text-[11px] text-indigo-600 mt-0.5">
+            <p className="text-[11px] text-matcha-600 mt-0.5">
               Matching each line against open invoices and bills. The first run warms up the
               matcher, so it can take a few seconds — results stay ready after that.
             </p>
           </div>
-          <Loader2 className="w-4 h-4 animate-spin text-indigo-400 flex-shrink-0" />
+          <Loader2 className="w-4 h-4 animate-spin text-matcha-400 flex-shrink-0" />
         </div>
       )}
 
@@ -454,7 +454,7 @@ function ProgressRing({ done, total, pct }: { done: number; total: number; pct: 
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-indigo-100" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-matcha-100" />
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -464,10 +464,10 @@ function ProgressRing({ done, total, pct }: { done: number; total: number; pct: 
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={offset}
-          className="stroke-indigo-500 transition-[stroke-dashoffset] duration-500 ease-out"
+          className="stroke-matcha-500 transition-[stroke-dashoffset] duration-500 ease-out"
         />
       </svg>
-      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold tabular-nums text-indigo-700">
+      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold tabular-nums text-matcha-700">
         {done}/{total}
       </span>
     </div>
@@ -562,7 +562,7 @@ function ReconcileRow({
                 {t}
                 {t === 'match' && hasSplit && (
                   <span
-                    className="w-1.5 h-1.5 rounded-full bg-indigo-500"
+                    className="w-1.5 h-1.5 rounded-full bg-matcha-500"
                     title="Possible split payment — open Match to review"
                   />
                 )}
@@ -571,7 +571,7 @@ function ReconcileRow({
           </div>
           <div className="flex items-center gap-2">
             {suggestionsLoading && (
-              <span className="flex items-center gap-1 text-[11px] text-indigo-600 font-medium">
+              <span className="flex items-center gap-1 text-[11px] text-matcha-600 font-medium">
                 <Loader2 className="w-3 h-3 animate-spin" />
                 Analysing…
               </span>
@@ -819,7 +819,7 @@ function MatchTab({
           {selected && (
             <button
               onClick={() => setExplainOpen((v) => !v)}
-              className="text-[11px] text-muted-foreground hover:text-indigo-700 flex items-center gap-1"
+              className="text-[11px] text-muted-foreground hover:text-matcha-700 flex items-center gap-1"
             >
               How was this matched?
               {explainOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
@@ -876,13 +876,13 @@ function MatchTab({
             className={cn(
               'w-full flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded-md border transition-colors',
               bulkOpen
-                ? 'bg-indigo-50 border-indigo-200 text-indigo-800 font-medium'
-                : 'border-dashed border-muted-foreground/40 text-muted-foreground hover:border-indigo-300 hover:text-indigo-700',
+                ? 'bg-matcha-50 border-matcha-200 text-matcha-800 font-medium'
+                : 'border-dashed border-muted-foreground/40 text-muted-foreground hover:border-matcha-300 hover:text-matcha-700',
             )}
           >
             <span className="flex items-center gap-1.5">
               {bulkData?.suggested_groups.length ? (
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />
+                <span className="w-1.5 h-1.5 rounded-full bg-matcha-500 flex-shrink-0" />
               ) : null}
               Match multiple {isInflow ? 'invoices' : 'bills'}
               {bulkData?.suggested_groups.length ? ` · ${bulkData.suggested_groups.length} group${bulkData.suggested_groups.length > 1 ? 's' : ''} found` : ''}
@@ -961,12 +961,12 @@ function BulkMatchPanel({
   })
 
   return (
-    <div className="rounded-md border border-indigo-100 bg-indigo-50/20 px-2.5 py-2 space-y-2">
+    <div className="rounded-md border border-matcha-100 bg-matcha-50/20 px-2.5 py-2 space-y-2">
 
       {/* Vendor chip */}
       {data.vendor && (
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-indigo-700 font-medium">{data.vendor}</span>
+          <span className="text-[11px] text-matcha-700 font-medium">{data.vendor}</span>
           <span className="text-[10px] text-muted-foreground">
             · {Math.round(data.vendor_score * 100)}% match from description
           </span>
@@ -1018,7 +1018,7 @@ function BulkMatchPanel({
                     'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border transition-colors',
                     isActive
                       ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
-                      : 'bg-white border-indigo-200 text-indigo-700 hover:bg-indigo-50',
+                      : 'bg-white border-matcha-200 text-matcha-700 hover:bg-matcha-50',
                   )}
                 >
                   {group.length} {data.doc_type}s · {formatCurrency(groupTotal, currency)}
@@ -1039,7 +1039,7 @@ function BulkMatchPanel({
               key={doc.id}
               className={cn(
                 'flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer transition-colors',
-                checked ? 'bg-indigo-50' : 'hover:bg-muted/40',
+                checked ? 'bg-matcha-50' : 'hover:bg-muted/40',
               )}
             >
               <div className="flex items-center gap-2 min-w-0">
@@ -1047,12 +1047,12 @@ function BulkMatchPanel({
                   type="checkbox"
                   checked={checked}
                   onChange={() => toggle(doc.id)}
-                  className="accent-indigo-600 w-3.5 h-3.5 flex-shrink-0"
+                  className="accent-matcha-600 w-3.5 h-3.5 flex-shrink-0"
                 />
                 <span className="font-mono text-[11px] text-muted-foreground">{doc.label}</span>
                 <span className="text-[11px] text-muted-foreground truncate">{formatDate(doc.date)}</span>
               </div>
-              <span className={cn('font-mono text-xs font-medium flex-shrink-0', checked && 'text-indigo-700')}>
+              <span className={cn('font-mono text-xs font-medium flex-shrink-0', checked && 'text-matcha-700')}>
                 {formatCurrency(doc.amount, currency)}
               </span>
             </label>
@@ -1131,7 +1131,7 @@ function ScoreBar({ value, className }: { value: number; className?: string }) {
   return (
     <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
       <div
-        className={cn('h-full rounded-full transition-all', className ?? 'bg-indigo-500')}
+        className={cn('h-full rounded-full transition-all', className ?? 'bg-matcha-500')}
         style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }}
       />
     </div>
@@ -1163,7 +1163,7 @@ function ExplainPanel({ lineId, docType, docId }: { lineId: number; docType: 'in
           ))}
           <div className="flex items-center justify-between border-t pt-1.5 mt-1">
             <span className="font-medium text-foreground">Final score</span>
-            <span className="font-mono font-semibold text-indigo-700">
+            <span className="font-mono font-semibold text-matcha-700">
               {trace.final.score_pct}% · {trace.final.strength_label}
             </span>
           </div>
@@ -1240,7 +1240,7 @@ function ExplainStep({ step: s }: { step: TraceStep }) {
       <Row>
         <p className="font-medium text-foreground">Best signal wins</p>
         <div className="flex items-center gap-2">
-          <ScoreBar value={num(s.name_score)} className="bg-indigo-500" />
+          <ScoreBar value={num(s.name_score)} className="bg-matcha-500" />
           <span className="font-mono text-foreground">{num(s.name_score).toFixed(2)}</span>
           <span className="text-muted-foreground">({String(s.method)})</span>
         </div>

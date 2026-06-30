@@ -9,6 +9,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Loader2 } from 'lucide-react'
+import MatchaMark from '@/components/MatchaMark'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -57,16 +58,16 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-indigo-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-matcha-50 px-4">
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="space-y-1 pb-4">
           <div className="flex items-center gap-2.5 pb-2">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-600 to-indigo-700 flex items-center justify-center">
-              <span className="text-white font-black text-base">OOO</span>
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-matcha-600 to-matcha-700 flex items-center justify-center text-white">
+              <MatchaMark className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-base font-semibold text-foreground">Bank Reconciliation</p>
-              <p className="text-xs text-muted-foreground">Sign in to continue</p>
+              <p className="font-display text-lg font-semibold text-foreground leading-tight">Matcha</p>
+              <p className="text-xs text-muted-foreground">It matches · sign in to continue</p>
             </div>
           </div>
         </CardHeader>
@@ -120,7 +121,7 @@ export default function Login() {
             {registerEnabled && (
               <p className="text-center text-sm text-muted-foreground pt-2">
                 No account yet?{' '}
-                <Link to="/register" className="text-indigo-600 font-medium hover:underline">
+                <Link to="/register" className="text-matcha-600 font-medium hover:underline">
                   Create one
                 </Link>
               </p>
