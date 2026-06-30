@@ -12,6 +12,21 @@ const config: Config = {
     },
     extend: {
       colors: {
+        // Matcha — the brand green as a full utility scale. The app's accent
+        // utilities (chips, score bars, progress) reference this directly; the
+        // CSS-var `primary` carries the same green for the themed chrome.
+        matcha: {
+          50: '#f4f7ec',
+          100: '#e7efce',
+          200: '#cfe0a4',
+          300: '#b2cd76',
+          400: '#97b850',
+          500: '#7d9e37',
+          600: '#62802b',
+          700: '#4b6224',
+          800: '#3d4f21',
+          900: '#33431f',
+        },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
@@ -71,6 +86,10 @@ const config: Config = {
       fontFamily: {
         sans: ['Inter', ...fontFamily.sans],
         mono: ['JetBrains Mono', ...fontFamily.mono],
+        // A soft optical serif used sparingly for the brand wordmark and a few
+        // hero headings — gives the "paper & matcha" surfaces some personality
+        // without touching the workhorse body/UI text (which stays Inter).
+        display: ['Fraunces', ...fontFamily.serif],
       },
       keyframes: {
         'accordion-down': {

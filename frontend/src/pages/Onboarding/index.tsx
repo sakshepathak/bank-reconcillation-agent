@@ -152,11 +152,11 @@ export default function Onboarding() {
   const noOrgSelected = (user?.current_org_id ?? null) === null
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-indigo-50 px-4 py-10">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-matcha-50 px-4 py-10">
       <Card className="w-full max-w-2xl shadow-lg">
         <CardHeader className="space-y-1 pb-4 border-b">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-indigo-600 to-indigo-700 flex items-center justify-center flex-shrink-0">
+            <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-matcha-600 to-matcha-700 flex items-center justify-center flex-shrink-0">
               <Building2 className="w-5 h-5 text-white" />
             </div>
             <div>
@@ -188,14 +188,14 @@ export default function Onboarding() {
                     type="button"
                     onClick={() => handleSelectExisting(o.id)}
                     disabled={switchingId !== null}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-slate-200 bg-white hover:bg-indigo-50/60 hover:border-indigo-300 transition-colors text-left disabled:opacity-60"
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-slate-200 bg-white hover:bg-matcha-50/60 hover:border-matcha-300 transition-colors text-left disabled:opacity-60"
                   >
-                    <div className="w-8 h-8 rounded-md bg-indigo-100 flex items-center justify-center flex-shrink-0">
-                      <Building2 className="w-4 h-4 text-indigo-600" />
+                    <div className="w-8 h-8 rounded-md bg-matcha-100 flex items-center justify-center flex-shrink-0">
+                      <Building2 className="w-4 h-4 text-matcha-600" />
                     </div>
                     <span className="flex-1 text-sm font-medium truncate">{o.name}</span>
                     <span className="text-xs text-muted-foreground capitalize">{o.role}</span>
-                    {switchingId === o.id && <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />}
+                    {switchingId === o.id && <Loader2 className="w-4 h-4 animate-spin text-matcha-600" />}
                   </button>
                 ))}
               </div>
@@ -306,7 +306,7 @@ export default function Onboarding() {
               <label className="flex items-center gap-2.5 cursor-pointer text-sm font-medium text-foreground">
                 <input
                   type="checkbox"
-                  className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
+                  className="h-4 w-4 rounded border-slate-300 accent-matcha-600"
                   {...register('vat_registered')}
                 />
                 <span>This business is VAT registered</span>

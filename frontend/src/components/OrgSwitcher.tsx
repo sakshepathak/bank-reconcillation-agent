@@ -42,20 +42,20 @@ export default function OrgSwitcher() {
             // Solid surface — the previous bg-white/10 was near-invisible on the
             // indigo sidebar and below the dropdown when expanded.
             'w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg',
-            'bg-white text-indigo-900 text-sm font-semibold shadow-sm',
+            'bg-white text-matcha-900 text-sm font-semibold shadow-sm',
             'hover:bg-white/95 transition-colors',
             'data-[state=open]:ring-2 data-[state=open]:ring-white/60',
           )}
         >
           <span className="flex items-center gap-2 min-w-0">
-            <Building2 className="w-4 h-4 flex-shrink-0 text-indigo-600" />
+            <Building2 className="w-4 h-4 flex-shrink-0 text-matcha-600" />
             <span className="truncate hidden group-hover:inline group-data-[pinned=true]:inline">
               {current?.name ?? 'No organization'}
             </span>
           </span>
           {/* Hidden when the sidebar is collapsed (so it doesn't overlap the
               building icon); shown when the rail is expanded by hover or pin. */}
-          <ChevronsUpDown className="w-3.5 h-3.5 flex-shrink-0 text-indigo-500 hidden group-hover:block group-data-[pinned=true]:block" />
+          <ChevronsUpDown className="w-3.5 h-3.5 flex-shrink-0 text-matcha-500 hidden group-hover:block group-data-[pinned=true]:block" />
         </button>
       </DropdownMenu.Trigger>
 
@@ -87,13 +87,13 @@ export default function OrgSwitcher() {
                 className={cn(
                   'flex items-center gap-2 px-2 py-2 rounded-md text-sm cursor-pointer',
                   'outline-none text-slate-700',
-                  'focus:bg-indigo-50 focus:text-indigo-900',
-                  active && 'font-semibold text-indigo-900 bg-indigo-50/60',
+                  'focus:bg-matcha-50 focus:text-matcha-900',
+                  active && 'font-semibold text-matcha-900 bg-matcha-50/60',
                 )}
               >
                 <Building2 className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
                 <span className="flex-1 truncate">{o.name}</span>
-                {active && <Check className="w-4 h-4 text-indigo-600 flex-shrink-0" />}
+                {active && <Check className="w-4 h-4 text-matcha-600 flex-shrink-0" />}
                 {busyId === o.id && (
                   <span className="text-xs text-slate-500">switching…</span>
                 )}
@@ -110,8 +110,8 @@ export default function OrgSwitcher() {
             }}
             className={cn(
               'flex items-center gap-2 px-2 py-2 rounded-md text-sm cursor-pointer',
-              'outline-none text-indigo-700 font-medium',
-              'focus:bg-indigo-50',
+              'outline-none text-matcha-700 font-medium',
+              'focus:bg-matcha-50',
             )}
           >
             <Plus className="w-4 h-4 flex-shrink-0" />
