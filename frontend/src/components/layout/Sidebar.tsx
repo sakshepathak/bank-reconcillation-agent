@@ -11,6 +11,8 @@ import { useAuth } from '@/lib/auth-context'
 import type { BankAccount } from '@/types'
 import OrgSwitcher from '@/components/OrgSwitcher'
 import MatchaMark from '@/components/MatchaMark'
+import MatchaCup from '@/components/MatchaCup'
+import { Leaf, Sparkle } from '@/components/Doodles'
 
 type NavItem = { to: string; icon: typeof LayoutDashboard; label: string; badge?: boolean }
 
@@ -87,19 +89,21 @@ export default function Sidebar() {
         pinned ? 'w-56' : 'w-16 hover:w-56',
       )}
     >
-      {/* a big faint doodle steeping in the corner */}
+      {/* a big faint doodle steeping in the corner, plus a few floating friends */}
       <MatchaMark className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 w-44 h-44 text-white/[0.06] animate-sway" />
+      <Leaf className="pointer-events-none absolute right-2.5 top-[28%] w-6 h-6 text-white/[0.09] rotate-12 animate-sway" />
+      <Sparkle className="pointer-events-none absolute left-2.5 top-[52%] w-5 h-5 text-white/[0.10]" />
 
       {/* Brand + pin toggle */}
       <div className="relative flex items-center gap-2.5 px-3 py-4 border-b border-white/15">
-        <div className="relative w-9 h-9 rounded-xl bg-white/15 ring-1 ring-white/10 flex items-center justify-center flex-shrink-0 text-white">
-          {/* tiny wisp of steam off the mark */}
-          <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 flex gap-[3px] opacity-70">
+        <div className="relative w-9 h-9 rounded-2xl bg-white/90 ring-1 ring-black/5 flex items-center justify-center flex-shrink-0 shadow-sm">
+          {/* tiny wisp of steam off the cup */}
+          <span className="absolute -top-2 left-1/2 -translate-x-1/2 flex gap-[3px] opacity-70">
             {[0, 1, 2].map((i) => (
-              <span key={i} className="block w-[2px] h-2 rounded-full bg-white/70 animate-steam" style={{ animationDelay: `${i * 0.5}s` }} />
+              <span key={i} className="block w-[2px] h-2 rounded-full bg-white/80 animate-steam" style={{ animationDelay: `${i * 0.5}s` }} />
             ))}
           </span>
-          <MatchaMark className="w-6 h-6 group-hover-wiggle" />
+          <MatchaCup className="w-7 h-7 group-hover-wiggle" />
         </div>
         <div className={cn('leading-tight min-w-0', REVEAL)}>
           <p className="text-white font-display font-semibold text-base">Matcha</p>
@@ -192,7 +196,10 @@ export default function Sidebar() {
           <LogOut className="w-4 h-4 flex-shrink-0" />
           <span className={REVEAL}>Logout</span>
         </button>
-        <p className={cn('text-white/45 text-[10px] text-center pt-1', REVEAL)}>Matcha 🍵 steeped v1</p>
+        <div className={cn('flex items-center justify-center gap-1.5 pt-1', REVEAL)}>
+          <MatchaCup className="w-4 h-4" blink={false} />
+          <p className="text-white/45 text-[10px]">Matcha · steeped v1</p>
+        </div>
       </div>
     </aside>
   )
