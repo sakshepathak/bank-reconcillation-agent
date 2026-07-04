@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn, formatCurrency, formatPct, formatDate } from '@/lib/utils'
 import MatchaMark from '@/components/MatchaMark'
 import MatchaCup from '@/components/MatchaCup'
+import MatchingInstrument from '@/components/MatchingInstrument'
 import type { DashboardStats, RunSummary, BankAccount } from '@/types'
 
 /** Three rising steam wisps, tinted for light or dark backgrounds. */
@@ -105,7 +106,7 @@ function ReconcileHero({
   const caughtUp = hasAccounts && pending === 0
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary to-[hsl(89_52%_22%)] text-primary-foreground shadow-lg sm:col-span-2 lg:col-span-2 lg:row-span-2 p-7 flex flex-col justify-between min-h-[316px]">
+    <div className="relative overflow-hidden h-full rounded-2xl bg-gradient-to-br from-[hsl(89_46%_32%)] to-[hsl(89_52%_22%)] text-white shadow-lg p-7 flex flex-col justify-between min-h-[316px]">
       {/* texture, a reconcile watermark up top, and Matcha steaming below-right */}
       <div className="pointer-events-none absolute inset-0 paper-grain opacity-50" />
       <RefreshCw className="pointer-events-none absolute -right-6 -top-8 w-44 h-44 text-white/[0.08]" strokeWidth={1.25} />
@@ -156,14 +157,14 @@ function ReconcileHero({
         {!hasAccounts ? (
           <Link
             to="/bank-accounts"
-            className="inline-flex items-center gap-2 rounded-lg bg-card text-primary font-semibold px-5 py-2.5 shadow-sm hover:bg-white active:scale-[.98] transition-all"
+            className="inline-flex items-center gap-2 rounded-lg bg-card text-primary font-semibold px-5 py-2.5 shadow-sm hover:bg-white dark:hover:bg-muted active:scale-[.98] transition-all"
           >
             <Landmark className="w-4 h-4" /> Add a bank account
           </Link>
         ) : (
           <Link
             to="/reconciliation"
-            className="inline-flex items-center gap-2 rounded-lg bg-card text-primary font-semibold px-5 py-2.5 shadow-sm hover:bg-white active:scale-[.98] transition-all"
+            className="inline-flex items-center gap-2 rounded-lg bg-card text-primary font-semibold px-5 py-2.5 shadow-sm hover:bg-white dark:hover:bg-muted active:scale-[.98] transition-all"
           >
             {caughtUp ? 'Open reconciliation' : 'Start reconciling'}
             <ArrowRight className="w-4 h-4" />
@@ -243,8 +244,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Bento grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:auto-rows-fr">
+      {/* Hero row — the matching instrument beside the reconcile call to action */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+        <MatchingInstrument />
         <ReconcileHero
           loading={acctLoading}
           pending={pendingTotal}
@@ -253,7 +255,10 @@ export default function Dashboard() {
           currency={currency}
           hasAccounts={accts.length > 0}
         />
+      </div>
 
+      {/* Capabilities + at-a-glance */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <CapabilityTile
           to="/bank-accounts"
           icon={Upload}

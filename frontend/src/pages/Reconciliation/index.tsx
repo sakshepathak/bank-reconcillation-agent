@@ -1017,8 +1017,8 @@ function BulkMatchPanel({
                   className={cn(
                     'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border transition-colors',
                     isActive
-                      ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
-                      : 'bg-white border-matcha-200 text-matcha-700 hover:bg-matcha-50',
+                      ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium dark:bg-emerald-500/15 dark:border-emerald-500/40 dark:text-emerald-300'
+                      : 'bg-white border-matcha-200 text-matcha-700 hover:bg-matcha-50 dark:bg-card dark:border-border dark:text-primary dark:hover:bg-muted',
                   )}
                 >
                   {group.length} {data.doc_type}s · {formatCurrency(groupTotal, currency)}

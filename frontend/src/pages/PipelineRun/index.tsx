@@ -105,11 +105,11 @@ function ScoreBar({
     primary: 'bg-primary',
     emerald: 'bg-emerald-500',
     amber: 'bg-amber-500',
-    slate: 'bg-slate-400',
+    slate: 'bg-slate-400 dark:bg-slate-500',
     indigo: 'bg-matcha-500',
   }[tone]
   return (
-    <div className={cn('h-2 rounded-full bg-slate-100 overflow-hidden', className)}>
+    <div className={cn('h-2 rounded-full bg-slate-100 dark:bg-white/10 overflow-hidden', className)}>
       <div className={cn('h-full rounded-full transition-all', bg)} style={{ width: `${widthPct}%` }} />
     </div>
   )
@@ -529,10 +529,10 @@ function UploadTile({
 
 function RunSummary({ summary, live, processed, total }: { summary: RunSummaryData; live: boolean; processed: number; total: number }) {
   const stats = [
-    { label: live ? `Lines processed (${processed}/${total})` : 'Lines processed', value: summary.total, icon: FileText, tone: 'text-slate-700' },
+    { label: live ? `Lines processed (${processed}/${total})` : 'Lines processed', value: summary.total, icon: FileText, tone: 'text-foreground' },
     { label: 'Auto-match quality', value: summary.auto_matched, icon: CheckCircle2, tone: 'text-emerald-600' },
     { label: 'Need review', value: summary.needs_review, icon: AlertTriangle, tone: 'text-amber-600' },
-    { label: 'No candidate', value: summary.unmatched, icon: XCircle, tone: 'text-slate-400' },
+    { label: 'No candidate', value: summary.unmatched, icon: XCircle, tone: 'text-muted-foreground' },
   ]
   const methodEntries = Object.entries(summary.methods).filter(([m]) => m !== 'no-name')
 

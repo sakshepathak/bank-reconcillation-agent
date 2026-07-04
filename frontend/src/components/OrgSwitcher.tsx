@@ -67,12 +67,12 @@ export default function OrgSwitcher() {
             // Force solid white background + clear border + meaningful shadow.
             // bg-popover was rendering near-transparent on this theme — the user
             // could barely read the menu against the page behind it.
-            'z-50 min-w-[220px] rounded-lg border border-slate-200 bg-white p-1.5 shadow-xl',
+            'z-50 min-w-[220px] rounded-lg border border-slate-200 bg-white p-1.5 shadow-xl dark:border-border dark:bg-popover',
             'data-[state=open]:animate-in data-[state=closed]:animate-out',
             'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
           )}
         >
-          <DropdownMenu.Label className="px-2 py-1.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+          <DropdownMenu.Label className="px-2 py-1.5 text-[11px] font-semibold text-slate-500 dark:text-muted-foreground uppercase tracking-wide">
             Your organisations
           </DropdownMenu.Label>
           {user.orgs.map((o) => {
@@ -86,22 +86,22 @@ export default function OrgSwitcher() {
                 }}
                 className={cn(
                   'flex items-center gap-2 px-2 py-2 rounded-md text-sm cursor-pointer',
-                  'outline-none text-slate-700',
-                  'focus:bg-matcha-50 focus:text-matcha-900',
-                  active && 'font-semibold text-matcha-900 bg-matcha-50/60',
+                  'outline-none text-slate-700 dark:text-foreground',
+                  'focus:bg-matcha-50 focus:text-matcha-900 dark:focus:bg-primary-subtle dark:focus:text-foreground',
+                  active && 'font-semibold text-matcha-900 bg-matcha-50/60 dark:text-foreground dark:bg-primary-subtle/60',
                 )}
               >
-                <Building2 className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
+                <Building2 className="w-3.5 h-3.5 flex-shrink-0 text-slate-400 dark:text-muted-foreground" />
                 <span className="flex-1 truncate">{o.name}</span>
                 {active && <Check className="w-4 h-4 text-matcha-600 flex-shrink-0" />}
                 {busyId === o.id && (
-                  <span className="text-xs text-slate-500">switching…</span>
+                  <span className="text-xs text-slate-500 dark:text-muted-foreground">switching…</span>
                 )}
               </DropdownMenu.Item>
             )
           })}
 
-          <DropdownMenu.Separator className="my-1 h-px bg-slate-100" />
+          <DropdownMenu.Separator className="my-1 h-px bg-slate-100 dark:bg-border" />
 
           <DropdownMenu.Item
             onSelect={(e) => {
@@ -110,8 +110,8 @@ export default function OrgSwitcher() {
             }}
             className={cn(
               'flex items-center gap-2 px-2 py-2 rounded-md text-sm cursor-pointer',
-              'outline-none text-matcha-700 font-medium',
-              'focus:bg-matcha-50',
+              'outline-none text-matcha-700 font-medium dark:text-primary',
+              'focus:bg-matcha-50 dark:focus:bg-primary-subtle',
             )}
           >
             <Plus className="w-4 h-4 flex-shrink-0" />

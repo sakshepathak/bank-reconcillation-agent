@@ -82,7 +82,7 @@ export default function Sidebar() {
       data-pinned={pinned ? 'true' : 'false'}
       className={cn(
         'group relative flex flex-col flex-shrink-0 overflow-hidden shadow-xl',
-        'bg-gradient-to-b from-[hsl(84_44%_40%)] via-primary to-[hsl(89_50%_19%)]',
+        'bg-gradient-to-b from-[hsl(84_44%_40%)] via-[hsl(89_46%_32%)] to-[hsl(89_50%_19%)]',
         'transition-[width] duration-200 ease-out',
         pinned ? 'w-56' : 'w-16 hover:w-56',
       )}
