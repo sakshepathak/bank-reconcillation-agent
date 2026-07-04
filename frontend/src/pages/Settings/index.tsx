@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Check, AlertTriangle, Download, Loader2 } from 'lucide-react'
+import { Plus, Trash2, Check, AlertTriangle, Download, Loader2, Monitor, Sun, Moon } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth, type OrgFull } from '@/lib/auth-context'
 import { Badge } from '@/components/ui/badge'
@@ -11,9 +11,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import { useTheme, type ThemeChoice } from '@/lib/theme-context'
 import type { UserProfile, Company, Service, TaxTreatment } from '@/types'
 
-type Tab = 'profile' | 'organisation' | 'services'
+type Tab = 'profile' | 'organisation' | 'services' | 'appearance'
 
 // ── Profile Tab ───────────────────────────────────────────────────────────────
 
@@ -583,12 +584,80 @@ function OrganisationTab() {
   )
 }
 
+// ── Appearance Tab (theme) ────────────────────────────────────────────────────
+
+function AppearanceTab() {
+  const { choice, resolved, setChoice } = useTheme()
+
+  const options: { id: ThemeChoice; label: string; icon: typeof Sun; hint: string }[] = [
+    { id: 'system', label: 'System', icon: Monitor, hint: 'Follow your device' },
+    { id: 'light',  label: 'Light',  icon: Sun,     hint: 'Warm paper' },
+    { id: 'dark',   label: 'Dark',   icon: Moon,    hint: 'Steeped bowl' },
+  ]
+
+  return (
+    <div className="space-y-5 max-w-lg">
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Theme</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Choose how Matcha looks.{choice === 'system' && ` Following your device — currently ${resolved}.`}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        {options.map(({ id, label, icon: Icon, hint }) => {
+          const active = choice === id
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setChoice(id)}
+              aria-pressed={active}
+              className={cn(
+                'relative flex flex-col items-start gap-2.5 rounded-xl border p-4 text-left transition-all',
+                active
+                  ? 'border-primary ring-2 ring-primary/30 bg-primary-subtle/50'
+                  : 'border-border hover:border-primary/40 hover:bg-muted/50',
+              )}
+            >
+              {active && <Check className="absolute top-3 right-3 w-4 h-4 text-primary" />}
+              <div className={cn(
+                'w-9 h-9 rounded-lg flex items-center justify-center',
+                active ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground',
+              )}>
+                <Icon className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">{label}</p>
+                <p className="text-xs text-muted-foreground">{hint}</p>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Live preview — a few themed surfaces so the choice is tangible */}
+      <div className="rounded-xl border bg-card shadow-sm p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-3">Preview</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="inline-flex items-center h-8 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium">Primary</span>
+          <span className="inline-flex items-center h-8 px-3 rounded-lg bg-muted text-foreground text-sm">Surface</span>
+          <Badge variant="success">matched</Badge>
+          <Badge variant="warning">pending</Badge>
+          <span className="font-mono text-sm text-foreground">£33,875.14</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Settings Page ────────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'profile', label: 'Profile' },
   { id: 'organisation', label: 'Organisation' },
   { id: 'services', label: 'Services & Products' },
+  { id: 'appearance', label: 'Appearance' },
 ]
 
 export default function Settings() {
@@ -626,6 +695,7 @@ export default function Settings() {
         {tab === 'profile' && <ProfileTab />}
         {tab === 'organisation' && <OrganisationTab />}
         {tab === 'services' && <ServicesTab />}
+        {tab === 'appearance' && <AppearanceTab />}
       </div>
     </div>
   )

@@ -54,6 +54,59 @@
     --ring: 89 42% 42%;                /* softer matcha, legible on cream */
 
     --radius: 0.625rem;                /* 10px — softer, more designed */
+
+    color-scheme: light;
+  }
+
+  /* ── "Steeped" — the dark bowl ──────────────────────────────────────────
+     Same semantic tokens, dark values, so the whole app re-skins from one
+     place. Cards float LIGHTER than the near-black page (the paper inversion,
+     kept). The brand-green surfaces (sidebar, hero, chat) are pinned in their
+     components to a fixed matcha, so `--primary` is free to go bright jade
+     here — for punchy accents and buttons (paired with dark ink text). */
+  .dark {
+    --background: 146 22% 7%;          /* #0C130F  the bottom of the bowl */
+    --foreground: 83 28% 92%;          /* #E9F0DE  foam */
+
+    --card: 145 18% 11%;               /* #16221B  cards sit above the void */
+    --card-foreground: 83 28% 92%;
+
+    --popover: 146 20% 9%;
+    --popover-foreground: 83 28% 92%;
+
+    --primary: 89 68% 60%;             /* #7FD93E  whisked jade */
+    --primary-foreground: 96 62% 8%;   /* #0C1B05  dark ink on jade */
+    --primary-hover: 89 70% 67%;
+    --primary-subtle: 140 30% 16%;     /* dark jade wash — selected rows */
+
+    --secondary: 140 10% 18%;
+    --secondary-foreground: 83 18% 88%;
+
+    --muted: 145 14% 15%;              /* skeletons, inert fills */
+    --muted-foreground: 120 9% 63%;    /* #97A79B  sage-gray meta (AA on cards) */
+
+    --accent: 140 26% 16%;             /* in-family hover wash */
+    --accent-foreground: 89 58% 72%;
+
+    --destructive: 6 68% 60%;          /* terracotta, lifted for dark */
+    --destructive-foreground: 40 33% 99%;
+    --destructive-subtle: 6 38% 18%;
+
+    --success: 152 52% 50%;
+    --success-foreground: 152 45% 8%;
+    --success-subtle: 152 28% 16%;
+
+    --warning: 38 82% 58%;
+    --warning-foreground: 40 45% 10%;
+    --warning-subtle: 40 38% 17%;
+
+    --sidebar: 146 30% 8%;
+
+    --border: 145 14% 20%;             /* #2B3A30  hairline on dark */
+    --input: 145 14% 24%;
+    --ring: 89 64% 55%;                /* jade focus ring */
+
+    color-scheme: dark;
   }
 }
 

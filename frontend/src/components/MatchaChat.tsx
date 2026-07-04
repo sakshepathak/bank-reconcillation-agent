@@ -102,7 +102,7 @@ export default function MatchaChat() {
           aria-label="Matcha assistant"
         >
           {/* Header */}
-          <div className="relative overflow-hidden flex items-center gap-3 px-4 py-3.5 bg-gradient-to-br from-[hsl(84_45%_40%)] via-primary to-[hsl(89_52%_22%)] text-primary-foreground">
+          <div className="relative overflow-hidden flex items-center gap-3 px-4 py-3.5 bg-gradient-to-br from-[hsl(84_45%_40%)] via-[hsl(89_46%_32%)] to-[hsl(89_52%_22%)] text-white">
             <MatchaMark className="absolute -right-3 -bottom-5 w-24 h-24 text-white/10 animate-sway" />
             <div className="relative w-10 h-10 rounded-2xl bg-white/15 flex items-center justify-center flex-shrink-0">
               <MatchaCup className="w-7 h-7" />
@@ -207,7 +207,7 @@ export default function MatchaChat() {
         className={cn(
           'group fixed bottom-6 right-6 z-50 w-16 h-16 rounded-full shadow-lg',
           'flex items-center justify-center overflow-visible',
-          'bg-gradient-to-br from-[hsl(84_46%_46%)] via-primary to-[hsl(89_52%_22%)]',
+          'bg-gradient-to-br from-[hsl(84_46%_46%)] via-[hsl(89_46%_32%)] to-[hsl(89_52%_22%)]',
           'ring-1 ring-black/5 hover:ring-4 hover:ring-primary/25',
           'hover:scale-105 active:scale-95 transition-[transform,box-shadow] duration-150',
           !open && 'animate-bob',
